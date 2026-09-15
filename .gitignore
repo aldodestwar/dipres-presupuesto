@@ -1,0 +1,37 @@
+# Entornos virtuales y Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+env/
+ENV/
+
+# Base de datos SQLite grande (> 800 MB, supera límite de 100 MB de GitHub)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+data/database/presupuesto.db
+
+# Archivos scrapeados y temporales
+data/downloads/*
+!data/downloads/.gitkeep
+data/exports/*
+!data/exports/.gitkeep
+data/dipres_programa_*.html
+
+# Túneles y binarios
+cloudflared.exe
+.tunnel_url
+*.log
+tunnel.log
+
+# IDEs y SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+scratch/
