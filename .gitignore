@@ -7,6 +7,8 @@ __pycache__/
 venv/
 env/
 ENV/
+runtime/
+python_portable/
 
 # Base de datos SQLite grande (> 800 MB, supera límite de 100 MB de GitHub)
 *.db
