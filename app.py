@@ -1962,13 +1962,20 @@ def render_national_tops_view(
                         # Detectar clic en un subtítulo
                         if subt_event and "selection" in subt_event and subt_event["selection"].get("points"):
                             pt_s = subt_event["selection"]["points"][0]
-                            clicked_subt_label = pt_s.get("y")
-                            if clicked_subt_label:
-                                sub_match = df_sub_growth[df_sub_growth["label"] == clicked_subt_label]
-                                if not sub_match.empty:
-                                    st.session_state["growth_drill_subt"] = sub_match["subtitulo_cod"].iloc[0]
-                                    st.session_state["growth_drill_prog"] = None
-                                    st.rerun()
+                            c_data = pt_s.get("customdata")
+                            s_cod_found = None
+                            if c_data is not None and len(c_data) > 0:
+                                s_cod_found = str(c_data[0])
+                            else:
+                                clicked_subt_label = pt_s.get("y")
+                                if clicked_subt_label:
+                                    sub_match = df_sub_growth[df_sub_growth["label"] == clicked_subt_label]
+                                    if not sub_match.empty:
+                                        s_cod_found = sub_match["subtitulo_cod"].iloc[0]
+                            if s_cod_found:
+                                st.session_state["growth_drill_subt"] = s_cod_found
+                                st.session_state["growth_drill_prog"] = None
+                                st.rerun()
 
                         # Acceso rápido alternativo con selector
                         sub_opts = ["-- Seleccionar Subtítulo para Profundizar --"] + df_sub_growth["label"].tolist()
@@ -2068,6 +2075,20 @@ def render_national_tops_view(
                                     full_prog_name = c_data[0]
                                     st.session_state["growth_drill_prog"] = full_prog_name
                                     st.rerun()
+
+                            # Selector complementario para programas
+                            prog_opts = ["-- Seleccionar Programa para Detalle de Ítems --"] + df_prog_growth["programa"].tolist()
+                            c_prog_pick, _ = st.columns([7, 3])
+                            with c_prog_pick:
+                                pick_prog_val = st.selectbox(
+                                    "🏢 O selecciona un programa específico de la lista:",
+                                    options=prog_opts,
+                                    key=f"sb_pick_prog_{active_dd_min}_{active_subt}"
+                                )
+                                if pick_prog_val != "-- Seleccionar Programa para Detalle de Ítems --":
+                                    if st.session_state.get("growth_drill_prog") != pick_prog_val:
+                                        st.session_state["growth_drill_prog"] = pick_prog_val
+                                        st.rerun()
 
                             # ------------------------------------------------------------------
                             # NIVEL 3: DETALLE POR ÍTEM DE UN PROGRAMA ESPECÍFICO

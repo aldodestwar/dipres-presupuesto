@@ -1458,17 +1458,18 @@ class DatabaseManager:
         df["subtitulo_cod"] = df["subtitulo_cod"].apply(lambda s: str(s).zfill(2))
         nom_map = df.groupby("subtitulo_cod")["subtitulo_nom"].last().to_dict()
 
-        piv_vig = df.pivot(index="subtitulo_cod", columns="year", values="vig_mm").fillna(0.0)
-        piv_ejec = df.pivot(index="subtitulo_cod", columns="year", values="ejec_mm").fillna(0.0)
+        piv_vig = df.pivot_table(index="subtitulo_cod", columns="year", values="vig_mm", aggfunc="sum").fillna(0.0)
+        piv_ejec = df.pivot_table(index="subtitulo_cod", columns="year", values="ejec_mm", aggfunc="sum").fillna(0.0)
 
         res = pd.DataFrame(index=piv_vig.index)
-        res["subtitulo_nom"] = res.index.map(nom_map).fillna("")
-        res["ini_mm"] = piv_vig.get(start_year, 0.0)
-        res["fin_mm"] = piv_vig.get(end_year, 0.0)
+        res["subtitulo_cod"] = piv_vig.index.astype(str)
+        res["subtitulo_nom"] = res["subtitulo_cod"].map(nom_map).fillna("")
+        res["ini_mm"] = piv_vig[start_year] if start_year in piv_vig.columns else 0.0
+        res["fin_mm"] = piv_vig[end_year] if end_year in piv_vig.columns else 0.0
         res["dif_mm"] = res["fin_mm"] - res["ini_mm"]
         res["pct_grow"] = ((res["fin_mm"] - res["ini_mm"]) / res["ini_mm"].replace(0.0, 1.0) * 100.0).fillna(0.0)
-        res["ini_ejec_mm"] = piv_ejec.get(start_year, 0.0)
-        res["fin_ejec_mm"] = piv_ejec.get(end_year, 0.0)
+        res["ini_ejec_mm"] = piv_ejec[start_year] if start_year in piv_ejec.columns else 0.0
+        res["fin_ejec_mm"] = piv_ejec[end_year] if end_year in piv_ejec.columns else 0.0
 
         subt_friendly_names = {
             "21": "Gastos en Personal",
@@ -1485,10 +1486,11 @@ class DatabaseManager:
             "34": "Servicio de la Deuda",
             "35": "Saldo Final de Caja"
         }
-        res["nombre_corto"] = res.index.map(subt_friendly_names).fillna(res["subtitulo_nom"])
-        res["label"] = "Subt. " + res.index + " - " + res["nombre_corto"]
+        res["nombre_corto"] = res["subtitulo_cod"].map(subt_friendly_names)
+        res["nombre_corto"] = res["nombre_corto"].fillna(res["subtitulo_nom"]).replace("", "Gasto")
+        res["label"] = "Subt. " + res["subtitulo_cod"] + " - " + res["nombre_corto"]
         res = res[(res["ini_mm"] > 0) | (res["fin_mm"] > 0)].sort_values("dif_mm", ascending=False)
-        return res.reset_index()
+        return res.reset_index(drop=True)
 
     def get_ministry_subtitulo_programas_growth(self, ministerio, subtitulo_cod, start_year, end_year, periodo, moneda="Pesos"):
         """Retorna los programas/servicios de un ministerio que ejecutan un subtítulo de gasto específico."""
@@ -1510,19 +1512,20 @@ class DatabaseManager:
             return pd.DataFrame()
 
         df = pd.DataFrame(rows)
-        piv_vig = df.pivot(index="programa", columns="year", values="vig_mm").fillna(0.0)
-        piv_ejec = df.pivot(index="programa", columns="year", values="ejec_mm").fillna(0.0)
+        piv_vig = df.pivot_table(index="programa", columns="year", values="vig_mm", aggfunc="sum").fillna(0.0)
+        piv_ejec = df.pivot_table(index="programa", columns="year", values="ejec_mm", aggfunc="sum").fillna(0.0)
 
         res = pd.DataFrame(index=piv_vig.index)
-        res["ini_mm"] = piv_vig.get(start_year, 0.0)
-        res["fin_mm"] = piv_vig.get(end_year, 0.0)
+        res["programa"] = piv_vig.index.astype(str)
+        res["ini_mm"] = piv_vig[start_year] if start_year in piv_vig.columns else 0.0
+        res["fin_mm"] = piv_vig[end_year] if end_year in piv_vig.columns else 0.0
         res["dif_mm"] = res["fin_mm"] - res["ini_mm"]
         res["pct_grow"] = ((res["fin_mm"] - res["ini_mm"]) / res["ini_mm"].replace(0.0, 1.0) * 100.0).fillna(0.0)
-        res["ini_ejec_mm"] = piv_ejec.get(start_year, 0.0)
-        res["fin_ejec_mm"] = piv_ejec.get(end_year, 0.0)
+        res["ini_ejec_mm"] = piv_ejec[start_year] if start_year in piv_ejec.columns else 0.0
+        res["fin_ejec_mm"] = piv_ejec[end_year] if end_year in piv_ejec.columns else 0.0
 
         res = res[(res["ini_mm"] > 0) | (res["fin_mm"] > 0)].sort_values("dif_mm", ascending=False)
-        return res.reset_index()
+        return res.reset_index(drop=True)
 
     def get_ministry_programa_items_growth(self, ministerio, subtitulo_cod, programa, start_year, end_year, periodo, moneda="Pesos"):
         """Retorna el desglose por Ítem / Clasificación de un programa específico."""
@@ -1530,14 +1533,17 @@ class DatabaseManager:
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('''
-                SELECT item_cod, item_nom, clasificacion, year,
+                SELECT COALESCE(NULLIF(item_cod, ''), asig_cod, '-') as item_cod,
+                       COALESCE(NULLIF(item_nom, ''), NULLIF(clasificacion, ''), 'Detalle') as item_nom,
+                       COALESCE(NULLIF(clasificacion, ''), '-') as clasificacion,
+                       year,
                        SUM(presupuesto_vigente) / 1000.0 as vig_mm,
                        SUM(ejecucion_acumulada) / 1000.0 as ejec_mm
                 FROM ejecucion_consolidada
                 WHERE (ministerio = ? OR ministerio LIKE ?) AND subtitulo_cod = ? AND programa = ?
                   AND year IN (?, ?) AND periodo = ? AND moneda = ?
-                  AND item_cod IS NOT NULL AND item_cod != ''
-                GROUP BY item_cod, item_nom, clasificacion, year
+                  AND ((item_cod IS NOT NULL AND item_cod != '') OR (asig_cod IS NOT NULL AND asig_cod != ''))
+                GROUP BY 1, 2, 3, year
             ''', (ministerio.strip(), f"%{ministerio.strip()}%", clean_sub, programa.strip(), start_year, end_year, periodo, moneda))
             rows = [dict(r) for r in c.fetchall()]
 
@@ -1545,10 +1551,10 @@ class DatabaseManager:
             return pd.DataFrame()
 
         df = pd.DataFrame(rows)
-        piv_vig = df.pivot(index=["item_cod", "item_nom", "clasificacion"], columns="year", values="vig_mm").fillna(0.0)
+        piv_vig = df.pivot_table(index=["item_cod", "item_nom", "clasificacion"], columns="year", values="vig_mm", aggfunc="sum").fillna(0.0)
         res = pd.DataFrame(index=piv_vig.index)
-        res["ini_mm"] = piv_vig.get(start_year, 0.0)
-        res["fin_mm"] = piv_vig.get(end_year, 0.0)
+        res["ini_mm"] = piv_vig[start_year] if start_year in piv_vig.columns else 0.0
+        res["fin_mm"] = piv_vig[end_year] if end_year in piv_vig.columns else 0.0
         res["dif_mm"] = res["fin_mm"] - res["ini_mm"]
         res["pct_grow"] = ((res["fin_mm"] - res["ini_mm"]) / res["ini_mm"].replace(0.0, 1.0) * 100.0).fillna(0.0)
         res = res[(res["ini_mm"] > 0) | (res["fin_mm"] > 0)].sort_values("dif_mm", ascending=False)
