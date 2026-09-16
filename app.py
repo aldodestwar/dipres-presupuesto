@@ -11,9 +11,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 import config
+import importlib
+import src.db_manager
+importlib.reload(src.db_manager)
+from src.db_manager import DatabaseManager
 from src.dipres_scraper import DipresScraper
 from src.excel_parser import DipresExcelParser
-from src.db_manager import DatabaseManager
 
 import streamlit.components.v1 as components
 
