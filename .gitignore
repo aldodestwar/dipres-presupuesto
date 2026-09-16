@@ -37,3 +37,4 @@ tunnel.log
 .DS_Store
 Thumbs.db
 scratch/
+app_backup_*.py

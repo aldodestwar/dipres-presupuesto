@@ -1763,7 +1763,372 @@ def render_national_tops_view(
                     )
                 )
 
-            st.plotly_chart(fig_growth, use_container_width=True)
+            # 💡 Mensaje de interactividad para el usuario
+            st.markdown("""
+            <div style="display: flex; align-items: center; justify-content: space-between; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 7px 12px; margin: 6px 0 10px 0;">
+                <span style="font-size: 0.82rem; color: #166534; font-weight: 600;">
+                    👆 <b>Profundización Interactiva:</b> Haz clic en la barra de cualquier ministerio para analizar en detalle sus <b>gastos específicos y programas</b>.
+                </span>
+                <span style="font-size: 0.74rem; color: #15803d; font-weight: 600; background: #dcfce7; padding: 2px 8px; border-radius: 9999px;">
+                    Nivel 1: Subtítulos ➔ Nivel 2: Programas
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            growth_chart_key = f"growth_chart_sel_{gr_start}_{gr_end}_{gr_periodo}_{'decomp' if gr_desglosar_items else 'bar'}"
+            growth_sel_event = st.plotly_chart(
+                fig_growth,
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode="points",
+                key=growth_chart_key
+            )
+
+            # Capturar clic en la barra del gráfico principal
+            if growth_sel_event and "selection" in growth_sel_event and growth_sel_event["selection"].get("points"):
+                pt_main = growth_sel_event["selection"]["points"][0]
+                clicked_y = pt_main.get("y")
+                if clicked_y:
+                    min_lookup = dict(zip(df_chart_data["min_short"], df_chart_data["ministerio"]))
+                    for full_m in df_growth["ministerio"]:
+                        min_lookup[full_m] = full_m
+                    selected_m = min_lookup.get(clicked_y, clicked_y)
+                    if st.session_state.get("growth_drill_min") != selected_m:
+                        st.session_state["growth_drill_min"] = selected_m
+                        st.session_state["growth_drill_subt"] = None
+                        st.session_state["growth_drill_prog"] = None
+
+            # Selector complementario por si el usuario prefiere elegir de una lista
+            all_mins_sorted = sorted(df_growth["ministerio"].unique().tolist())
+            current_drill = st.session_state.get("growth_drill_min")
+            idx_sel = (all_mins_sorted.index(current_drill) + 1) if (current_drill and current_drill in all_mins_sorted) else 0
+
+            c_sel_dd1, c_sel_dd2 = st.columns([7, 3])
+            with c_sel_dd1:
+                chosen_dd_min = st.selectbox(
+                    "🔍 Cartera seleccionada para profundizar (haz clic en el gráfico o elígela aquí):",
+                    options=["-- Ninguna (ver panorama general) --"] + all_mins_sorted,
+                    index=idx_sel,
+                    key="sb_growth_drill_min"
+                )
+                if chosen_dd_min != "-- Ninguna (ver panorama general) --":
+                    if st.session_state.get("growth_drill_min") != chosen_dd_min:
+                        st.session_state["growth_drill_min"] = chosen_dd_min
+                        st.session_state["growth_drill_subt"] = None
+                        st.session_state["growth_drill_prog"] = None
+                else:
+                    if current_drill is not None:
+                        st.session_state["growth_drill_min"] = None
+                        st.session_state["growth_drill_subt"] = None
+                        st.session_state["growth_drill_prog"] = None
+
+            with c_sel_dd2:
+                if st.session_state.get("growth_drill_min"):
+                    if st.button("❌ Cerrar Profundización", key="btn_close_drill", use_container_width=True):
+                        st.session_state["growth_drill_min"] = None
+                        st.session_state["growth_drill_subt"] = None
+                        st.session_state["growth_drill_prog"] = None
+                        st.rerun()
+
+            # ==============================================================================
+            # PANEL DE PROFUNDIZACIÓN DINÁMICA (NIVELES 1, 2 Y 3)
+            # ==============================================================================
+            active_dd_min = st.session_state.get("growth_drill_min")
+            if active_dd_min and active_dd_min in df_growth["ministerio"].values:
+                st.markdown(f"""
+                <div style="background-color: #f8fafc; border: 2px solid #3b82f6; border-radius: 12px; padding: 14px 18px; margin: 12px 0 16px 0; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <span style="font-size: 1.15rem; font-weight: 800; color: #0f172a;">🔎 Profundización de Gastos:</span>
+                            <span style="background-color: #eff6ff; color: #1d4ed8; font-weight: 800; font-size: 1.05rem; padding: 3px 12px; border-radius: 8px; border: 1px solid #bfdbfe;">
+                                {active_dd_min}
+                            </span>
+                            <span style="background-color: #f1f5f9; color: #475569; font-size: 0.82rem; padding: 2px 8px; border-radius: 6px; font-weight: 600;">
+                                Corte {gr_periodo} ({gr_start} ➔ {gr_end})
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Tarjetas de resumen del ministerio seleccionado
+                row_m = df_growth[df_growth["ministerio"] == active_dd_min].iloc[0]
+                c_dd_k1, c_dd_k2, c_dd_k3, c_dd_k4 = st.columns(4)
+                with c_dd_k1:
+                    st.metric(f"Presupuesto {gr_start}", f"${row_m['ini_mm']:,.1f} MM")
+                with c_dd_k2:
+                    st.metric(f"Presupuesto {gr_end}", f"${row_m['fin_mm']:,.1f} MM")
+                with c_dd_k3:
+                    st.metric("Variación en Monto", f"{'+' if row_m['dif_mm']>=0 else ''}${row_m['dif_mm']:,.1f} MM")
+                with c_dd_k4:
+                    st.metric("Tasa de Crecimiento", f"{'+' if row_m['pct_aumento']>=0 else ''}{row_m['pct_aumento']:.1f}%", delta=row_m["tramo"], delta_color="off")
+
+                # Obtener gastos específicos por subtítulo del ministerio
+                df_sub_growth = db.get_ministry_subtitulos_growth(
+                    ministerio=active_dd_min,
+                    start_year=gr_start,
+                    end_year=gr_end,
+                    periodo=gr_periodo,
+                    moneda=moneda
+                )
+
+                if df_sub_growth.empty:
+                    st.info(f"No se encontraron registros de subtítulos de gasto para {active_dd_min} en los años {gr_start} y {gr_end}.")
+                else:
+                    active_subt = st.session_state.get("growth_drill_subt")
+
+                    # Migas de pan de navegación
+                    b_col1, b_col2 = st.columns([8, 2])
+                    with b_col1:
+                        if active_subt:
+                            subt_name_match = df_sub_growth[df_sub_growth["subtitulo_cod"] == active_subt]
+                            subt_label_txt = subt_name_match["label"].iloc[0] if not subt_name_match.empty else f"Subtítulo {active_subt}"
+                            st.markdown(f"""
+                            <div style="font-size: 0.88rem; color: #475569; margin: 4px 0 8px 0;">
+                                <b>Navegación:</b> <span style="color: #2563eb; font-weight: 600;">🏛️ {clean_min_name(active_dd_min)}</span> &nbsp;➔&nbsp; <span style="background-color: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 5px; font-weight: 700;">📦 {subt_label_txt}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div style="font-size: 0.88rem; color: #475569; margin: 4px 0 8px 0;">
+                                <b>Nivel 1:</b> <span style="color: #2563eb; font-weight: 700;">🏛️ Gastos Específicos por Subtítulo de {clean_min_name(active_dd_min)}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    with b_col2:
+                        if active_subt:
+                            if st.button("⬅️ Volver a Subtítulos", key="btn_back_subt", use_container_width=True):
+                                st.session_state["growth_drill_subt"] = None
+                                st.session_state["growth_drill_prog"] = None
+                                st.rerun()
+
+                    if not active_subt:
+                        # ------------------------------------------------------------------
+                        # NIVEL 1: GRÁFICO DE GASTOS ESPECÍFICOS POR SUBTÍTULO
+                        # ------------------------------------------------------------------
+                        st.markdown(f"###### 📊 Variación de Gastos Específicos por Subtítulo ({gr_start} vs {gr_end})")
+                        st.caption("Haz clic en cualquier barra de subtítulo para ver qué programas o direcciones ejecutan ese gasto.")
+
+                        df_sub_plot = df_sub_growth.sort_values(by="dif_mm", ascending=True).copy()
+
+                        fig_subt = go.Figure()
+                        fig_subt.add_trace(go.Bar(
+                            name=f"Año {gr_start}",
+                            y=df_sub_plot["label"],
+                            x=df_sub_plot["ini_mm"],
+                            orientation='h',
+                            marker=dict(color="#94a3b8"),
+                            customdata=df_sub_plot[["subtitulo_cod", "dif_mm", "pct_grow", "ini_ejec_mm"]].values,
+                            hovertemplate=(
+                                "<b>%{y}</b><br>"
+                                f"Presupuesto {gr_start}: <b>$%{{x:,.1f}} MM</b><br>"
+                                f"Presupuesto {gr_end}: <b>$%{{customdata[1]+%{{x}}:,.1f}} MM</b><br>"
+                                "Variación Neta: <b>%{customdata[1]:+,.1f} MM</b> (%{customdata[2]:+.1f}%)<extra></extra>"
+                            )
+                        ))
+                        fig_subt.add_trace(go.Bar(
+                            name=f"Año {gr_end}",
+                            y=df_sub_plot["label"],
+                            x=df_sub_plot["fin_mm"],
+                            orientation='h',
+                            marker=dict(color="#2563eb"),
+                            customdata=df_sub_plot[["subtitulo_cod", "dif_mm", "pct_grow", "fin_ejec_mm"]].values,
+                            hovertemplate=(
+                                "<b>%{y}</b><br>"
+                                f"Presupuesto {gr_end}: <b>$%{{x:,.1f}} MM</b><br>"
+                                f"Presupuesto {gr_start}: <b>$%{{%{{x}}-%{{customdata[1]}}:,.1f}} MM</b><br>"
+                                "Variación Neta: <b>%{customdata[1]:+,.1f} MM</b> (%{customdata[2]:+.1f}%)<extra></extra>"
+                            )
+                        ))
+
+                        fig_subt.update_layout(
+                            barmode='group',
+                            paper_bgcolor="#ffffff",
+                            plot_bgcolor="#ffffff",
+                            height=max(360, len(df_sub_plot) * 32),
+                            margin=dict(l=20, r=30, t=30, b=40),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                            xaxis=dict(title="Presupuesto Vigente ($ Miles de Millones - MM)", gridcolor="#f1f5f9", linecolor="#cbd5e1"),
+                            yaxis=dict(title="", tickfont=dict(size=9.5, color="#0f172a"), linecolor="#cbd5e1")
+                        )
+
+                        subt_event = st.plotly_chart(
+                            fig_subt,
+                            use_container_width=True,
+                            on_select="rerun",
+                            selection_mode="points",
+                            key=f"chart_subt_drill_{active_dd_min}_{gr_start}_{gr_end}"
+                        )
+
+                        # Detectar clic en un subtítulo
+                        if subt_event and "selection" in subt_event and subt_event["selection"].get("points"):
+                            pt_s = subt_event["selection"]["points"][0]
+                            clicked_subt_label = pt_s.get("y")
+                            if clicked_subt_label:
+                                sub_match = df_sub_growth[df_sub_growth["label"] == clicked_subt_label]
+                                if not sub_match.empty:
+                                    st.session_state["growth_drill_subt"] = sub_match["subtitulo_cod"].iloc[0]
+                                    st.session_state["growth_drill_prog"] = None
+                                    st.rerun()
+
+                        # Acceso rápido alternativo con selector
+                        sub_opts = ["-- Seleccionar Subtítulo para Profundizar --"] + df_sub_growth["label"].tolist()
+                        c_sub_pick, _ = st.columns([6, 4])
+                        with c_sub_pick:
+                            pick_sub_lbl = st.selectbox("📦 O profundiza eligiendo el subtítulo:", options=sub_opts, key=f"sb_pick_subt_{active_dd_min}")
+                            if pick_sub_lbl != "-- Seleccionar Subtítulo para Profundizar --":
+                                s_code = df_sub_growth[df_sub_growth["label"] == pick_sub_lbl]["subtitulo_cod"].iloc[0]
+                                if st.session_state.get("growth_drill_subt") != s_code:
+                                    st.session_state["growth_drill_subt"] = s_code
+                                    st.session_state["growth_drill_prog"] = None
+                                    st.rerun()
+
+                    else:
+                        # ------------------------------------------------------------------
+                        # NIVEL 2: PROFUNDIZAR EN PROGRAMAS DEL SUBTÍTULO
+                        # ------------------------------------------------------------------
+                        subt_info = df_sub_growth[df_sub_growth["subtitulo_cod"] == active_subt]
+                        subt_title = subt_info["label"].iloc[0] if not subt_info.empty else f"Subtítulo {active_subt}"
+                        subt_dif = subt_info["dif_mm"].iloc[0] if not subt_info.empty else 0.0
+                        subt_pct = subt_info["pct_grow"].iloc[0] if not subt_info.empty else 0.0
+
+                        st.markdown(f"##### 🏢 Programas y Servicios que Explican: {subt_title}")
+                        st.caption(f"Variación Total del Rubro en la Cartera: **{'+' if subt_dif>=0 else ''}${subt_dif:,.1f} MM ({subt_pct:+.1f}%)**. Haz clic en cualquier programa para ver sus ítems específicos.")
+
+                        df_prog_growth = db.get_ministry_subtitulo_programas_growth(
+                            ministerio=active_dd_min,
+                            subtitulo_cod=active_subt,
+                            start_year=gr_start,
+                            end_year=gr_end,
+                            periodo=gr_periodo,
+                            moneda=moneda
+                        )
+
+                        if df_prog_growth.empty:
+                            st.info("No hay registros detallados de programas para este subtítulo.")
+                        else:
+                            df_prog_plot = df_prog_growth.sort_values("dif_mm", ascending=True).copy()
+                            # Limitar a top 25 si son demasiados para legibilidad
+                            if len(df_prog_plot) > 25:
+                                df_prog_plot = df_prog_plot.tail(25)
+
+                            fig_prog = go.Figure()
+                            fig_prog.add_trace(go.Bar(
+                                name=f"Año {gr_start}",
+                                y=df_prog_plot["programa"].apply(lambda p: format_prog_label(p, max_len=32)),
+                                x=df_prog_plot["ini_mm"],
+                                orientation='h',
+                                marker=dict(color="#cbd5e1"),
+                                customdata=df_prog_plot[["programa", "dif_mm", "pct_grow"]].values,
+                                hovertemplate=(
+                                    "<b>%{customdata[0]}</b><br>"
+                                    f"Presupuesto {gr_start}: <b>$%{{x:,.1f}} MM</b><br>"
+                                    f"Presupuesto {gr_end}: <b>$%{{customdata[1]+%{{x}}:,.1f}} MM</b><br>"
+                                    "Variación: <b>%{customdata[1]:+,.1f} MM</b> (%{customdata[2]:+.1f}%)<extra></extra>"
+                                )
+                            ))
+                            fig_prog.add_trace(go.Bar(
+                                name=f"Año {gr_end}",
+                                y=df_prog_plot["programa"].apply(lambda p: format_prog_label(p, max_len=32)),
+                                x=df_prog_plot["fin_mm"],
+                                orientation='h',
+                                marker=dict(color="#059669"),
+                                customdata=df_prog_plot[["programa", "dif_mm", "pct_grow"]].values,
+                                hovertemplate=(
+                                    "<b>%{customdata[0]}</b><br>"
+                                    f"Presupuesto {gr_end}: <b>$%{{x:,.1f}} MM</b><br>"
+                                    f"Presupuesto {gr_start}: <b>$%{{%{{x}}-%{{customdata[1]}}:,.1f}} MM</b><br>"
+                                    "Variación: <b>%{customdata[1]:+,.1f} MM</b> (%{customdata[2]:+.1f}%)<extra></extra>"
+                                )
+                            ))
+
+                            fig_prog.update_layout(
+                                barmode='group',
+                                paper_bgcolor="#ffffff",
+                                plot_bgcolor="#ffffff",
+                                height=max(380, len(df_prog_plot) * 28),
+                                margin=dict(l=20, r=30, t=30, b=40),
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                                xaxis=dict(title=f"Presupuesto Vigente en {subt_title} ($ MM)", gridcolor="#f1f5f9", linecolor="#cbd5e1"),
+                                yaxis=dict(title="", tickfont=dict(size=9.2, color="#0f172a"), linecolor="#cbd5e1")
+                            )
+
+                            prog_event = st.plotly_chart(
+                                fig_prog,
+                                use_container_width=True,
+                                on_select="rerun",
+                                selection_mode="points",
+                                key=f"chart_prog_drill_{active_dd_min}_{active_subt}"
+                            )
+
+                            # Capturar clic en un programa
+                            if prog_event and "selection" in prog_event and prog_event["selection"].get("points"):
+                                pt_p = prog_event["selection"]["points"][0]
+                                c_data = pt_p.get("customdata")
+                                if c_data is not None and len(c_data) > 0:
+                                    full_prog_name = c_data[0]
+                                    st.session_state["growth_drill_prog"] = full_prog_name
+                                    st.rerun()
+
+                            # ------------------------------------------------------------------
+                            # NIVEL 3: DETALLE POR ÍTEM DE UN PROGRAMA ESPECÍFICO
+                            # ------------------------------------------------------------------
+                            active_prog = st.session_state.get("growth_drill_prog")
+                            if active_prog:
+                                st.markdown(f"###### 📑 Líneas Presupuestarias e Ítems de: **{active_prog}**")
+                                df_items_growth = db.get_ministry_programa_items_growth(
+                                    ministerio=active_dd_min,
+                                    subtitulo_cod=active_subt,
+                                    programa=active_prog,
+                                    start_year=gr_start,
+                                    end_year=gr_end,
+                                    periodo=gr_periodo,
+                                    moneda=moneda
+                                )
+                                if not df_items_growth.empty:
+                                    st.dataframe(
+                                        df_items_growth[[
+                                            "item_cod", "item_nom", "clasificacion", "ini_mm", "fin_mm", "dif_mm", "pct_grow"
+                                        ]].rename(columns={
+                                            "item_cod": "Ítem",
+                                            "item_nom": "Nombre del Ítem",
+                                            "clasificacion": "Clasificación Económica",
+                                            "ini_mm": f"Presupuesto {gr_start} ($ MM)",
+                                            "fin_mm": f"Presupuesto {gr_end} ($ MM)",
+                                            "dif_mm": "Variación ($ MM)",
+                                            "pct_grow": "% Crecimiento"
+                                        }).style.format({
+                                            f"Presupuesto {gr_start} ($ MM)": "${:,.1f}",
+                                            f"Presupuesto {gr_end} ($ MM)": "${:,.1f}",
+                                            "Variación ($ MM)": "${:+,.1f}",
+                                            "% Crecimiento": "{:+.1f}%"
+                                        }),
+                                        use_container_width=True,
+                                        height=250
+                                    )
+                                else:
+                                    st.info("No hay asignaciones secundarias adicionales para este programa.")
+
+                            with st.expander(f"📋 Ver Tabla de Programas de {subt_title}"):
+                                st.dataframe(
+                                    df_prog_growth[[
+                                        "programa", "ini_mm", "fin_mm", "dif_mm", "pct_grow"
+                                    ]].rename(columns={
+                                        "programa": "Programa / Servicio",
+                                        "ini_mm": f"Presupuesto {gr_start} ($ MM)",
+                                        "fin_mm": f"Presupuesto {gr_end} ($ MM)",
+                                        "dif_mm": "Variación ($ MM)",
+                                        "pct_grow": "% Crecimiento"
+                                    }).style.format({
+                                        f"Presupuesto {gr_start} ($ MM)": "${:,.1f}",
+                                        f"Presupuesto {gr_end} ($ MM)": "${:,.1f}",
+                                        "Variación ($ MM)": "${:+,.1f}",
+                                        "% Crecimiento": "{:+.1f}%"
+                                    }),
+                                    use_container_width=True,
+                                    height=280
+                                )
+
+                st.markdown("---")
 
             with st.expander(f"📋 Ver Tabla Detallada de Cifras y Variaciones del Tramo ({gr_start} - {gr_end})"):
                 df_export = df_growth_plot[[

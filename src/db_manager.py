@@ -1435,4 +1435,124 @@ class DatabaseManager:
             years = [int(r[0]) for r in cursor.fetchall() if r[0] is not None]
         return sorted(years) if years else list(range(2018, 2027))
 
+    def get_ministry_subtitulos_growth(self, ministerio, start_year, end_year, periodo, moneda="Pesos"):
+        """Retorna la comparativa y variación de todos los subtítulos de gasto entre dos años para un ministerio."""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                SELECT subtitulo_cod, subtitulo_nom, year,
+                       SUM(presupuesto_vigente) / 1000.0 as vig_mm,
+                       SUM(ejecucion_acumulada) / 1000.0 as ejec_mm
+                FROM ejecucion_consolidada
+                WHERE (ministerio = ? OR ministerio LIKE ?) AND year IN (?, ?) AND periodo = ? AND moneda = ?
+                  AND subtitulo_cod IN ('21','22','23','24','25','26','29','30','31','32','33','34','35')
+                  AND (nivel = 'SUBTITULO' OR (nivel IS NULL AND item_cod = ''))
+                GROUP BY subtitulo_cod, subtitulo_nom, year
+            ''', (ministerio.strip(), f"%{ministerio.strip()}%", start_year, end_year, periodo, moneda))
+            rows = [dict(r) for r in c.fetchall()]
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        df["subtitulo_cod"] = df["subtitulo_cod"].apply(lambda s: str(s).zfill(2))
+        nom_map = df.groupby("subtitulo_cod")["subtitulo_nom"].last().to_dict()
+
+        piv_vig = df.pivot(index="subtitulo_cod", columns="year", values="vig_mm").fillna(0.0)
+        piv_ejec = df.pivot(index="subtitulo_cod", columns="year", values="ejec_mm").fillna(0.0)
+
+        res = pd.DataFrame(index=piv_vig.index)
+        res["subtitulo_nom"] = res.index.map(nom_map).fillna("")
+        res["ini_mm"] = piv_vig.get(start_year, 0.0)
+        res["fin_mm"] = piv_vig.get(end_year, 0.0)
+        res["dif_mm"] = res["fin_mm"] - res["ini_mm"]
+        res["pct_grow"] = ((res["fin_mm"] - res["ini_mm"]) / res["ini_mm"].replace(0.0, 1.0) * 100.0).fillna(0.0)
+        res["ini_ejec_mm"] = piv_ejec.get(start_year, 0.0)
+        res["fin_ejec_mm"] = piv_ejec.get(end_year, 0.0)
+
+        subt_friendly_names = {
+            "21": "Gastos en Personal",
+            "22": "Bienes y Servicios de Consumo",
+            "23": "Prestaciones de Seguridad Social",
+            "24": "Transferencias Corrientes",
+            "25": "Íntegros al Fisco",
+            "26": "Otros Gastos Corrientes",
+            "29": "Adquisición de Activos No Financieros",
+            "30": "Adquisición de Activos Financieros",
+            "31": "Iniciativas de Inversión (Obras)",
+            "32": "Préstamos",
+            "33": "Transferencias de Capital",
+            "34": "Servicio de la Deuda",
+            "35": "Saldo Final de Caja"
+        }
+        res["nombre_corto"] = res.index.map(subt_friendly_names).fillna(res["subtitulo_nom"])
+        res["label"] = "Subt. " + res.index + " - " + res["nombre_corto"]
+        res = res[(res["ini_mm"] > 0) | (res["fin_mm"] > 0)].sort_values("dif_mm", ascending=False)
+        return res.reset_index()
+
+    def get_ministry_subtitulo_programas_growth(self, ministerio, subtitulo_cod, start_year, end_year, periodo, moneda="Pesos"):
+        """Retorna los programas/servicios de un ministerio que ejecutan un subtítulo de gasto específico."""
+        clean_sub = str(subtitulo_cod).strip().zfill(2)
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                SELECT programa, year,
+                       SUM(presupuesto_vigente) / 1000.0 as vig_mm,
+                       SUM(ejecucion_acumulada) / 1000.0 as ejec_mm
+                FROM ejecucion_consolidada
+                WHERE (ministerio = ? OR ministerio LIKE ?) AND subtitulo_cod = ? AND year IN (?, ?) AND periodo = ? AND moneda = ?
+                  AND (nivel = 'SUBTITULO' OR (nivel IS NULL AND item_cod = ''))
+                GROUP BY programa, year
+            ''', (ministerio.strip(), f"%{ministerio.strip()}%", clean_sub, start_year, end_year, periodo, moneda))
+            rows = [dict(r) for r in c.fetchall()]
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        piv_vig = df.pivot(index="programa", columns="year", values="vig_mm").fillna(0.0)
+        piv_ejec = df.pivot(index="programa", columns="year", values="ejec_mm").fillna(0.0)
+
+        res = pd.DataFrame(index=piv_vig.index)
+        res["ini_mm"] = piv_vig.get(start_year, 0.0)
+        res["fin_mm"] = piv_vig.get(end_year, 0.0)
+        res["dif_mm"] = res["fin_mm"] - res["ini_mm"]
+        res["pct_grow"] = ((res["fin_mm"] - res["ini_mm"]) / res["ini_mm"].replace(0.0, 1.0) * 100.0).fillna(0.0)
+        res["ini_ejec_mm"] = piv_ejec.get(start_year, 0.0)
+        res["fin_ejec_mm"] = piv_ejec.get(end_year, 0.0)
+
+        res = res[(res["ini_mm"] > 0) | (res["fin_mm"] > 0)].sort_values("dif_mm", ascending=False)
+        return res.reset_index()
+
+    def get_ministry_programa_items_growth(self, ministerio, subtitulo_cod, programa, start_year, end_year, periodo, moneda="Pesos"):
+        """Retorna el desglose por Ítem / Clasificación de un programa específico."""
+        clean_sub = str(subtitulo_cod).strip().zfill(2)
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                SELECT item_cod, item_nom, clasificacion, year,
+                       SUM(presupuesto_vigente) / 1000.0 as vig_mm,
+                       SUM(ejecucion_acumulada) / 1000.0 as ejec_mm
+                FROM ejecucion_consolidada
+                WHERE (ministerio = ? OR ministerio LIKE ?) AND subtitulo_cod = ? AND programa = ?
+                  AND year IN (?, ?) AND periodo = ? AND moneda = ?
+                  AND item_cod IS NOT NULL AND item_cod != ''
+                GROUP BY item_cod, item_nom, clasificacion, year
+            ''', (ministerio.strip(), f"%{ministerio.strip()}%", clean_sub, programa.strip(), start_year, end_year, periodo, moneda))
+            rows = [dict(r) for r in c.fetchall()]
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        piv_vig = df.pivot(index=["item_cod", "item_nom", "clasificacion"], columns="year", values="vig_mm").fillna(0.0)
+        res = pd.DataFrame(index=piv_vig.index)
+        res["ini_mm"] = piv_vig.get(start_year, 0.0)
+        res["fin_mm"] = piv_vig.get(end_year, 0.0)
+        res["dif_mm"] = res["fin_mm"] - res["ini_mm"]
+        res["pct_grow"] = ((res["fin_mm"] - res["ini_mm"]) / res["ini_mm"].replace(0.0, 1.0) * 100.0).fillna(0.0)
+        res = res[(res["ini_mm"] > 0) | (res["fin_mm"] > 0)].sort_values("dif_mm", ascending=False)
+        return res.reset_index()
+
+
 
