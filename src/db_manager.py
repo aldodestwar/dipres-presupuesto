@@ -11,7 +11,25 @@ import config
 class DatabaseManager:
     def __init__(self, db_path=None):
         self.db_path = db_path or config.DB_PATH
+        self.ensure_db_extracted()
         self.init_db()
+
+    def ensure_db_extracted(self):
+        """Si la base de datos no existe o está vacía (como al desplegar en Streamlit Cloud), la reconstruye desde las partes comprimidas."""
+        try:
+            if not self.db_path.exists() or self.db_path.stat().st_size < 1000:
+                parts = sorted(self.db_path.parent.glob("presupuesto_part*.bin"))
+                if parts:
+                    import zipfile, io
+                    buffer = io.BytesIO()
+                    for p in parts:
+                        with open(p, "rb") as f_part:
+                            buffer.write(f_part.read())
+                    buffer.seek(0)
+                    with zipfile.ZipFile(buffer, "r") as zf:
+                        zf.extractall(self.db_path.parent)
+        except Exception as e:
+            print(f"[!] Error al reconstruir base de datos inicial: {e}")
 
     def get_connection(self):
         """Retorna una conexión a SQLite con timeout adecuado."""
