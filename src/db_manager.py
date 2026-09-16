@@ -288,6 +288,13 @@ class DatabaseManager:
             "periodos": periodos
         }
 
+    def get_loaded_periods_for_year(self, year):
+        """Retorna los periodos que tienen datos cargados para un año específico."""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT DISTINCT periodo FROM ejecucion_consolidada WHERE year = ?", (year,))
+            return [r[0] for r in c.fetchall()]
+
     def _build_where_clause(self, year=None, ministerio=None, programas=None, periodos=None, moneda=None, subtitulo=None):
         clauses = []
         params = []
@@ -360,8 +367,8 @@ class DatabaseManager:
         {where_sql} {extra_inv_total}
         """
 
-        # Desglose específico por cada uno de los 3 subtítulos (29, 31, 33)
-        extra_subts = "AND subtitulo_cod IN ('29', '31', '33') AND nivel = 'SUBTITULO'" if where_sql else "WHERE subtitulo_cod IN ('29', '31', '33') AND nivel = 'SUBTITULO'"
+        # Desglose específico por subtítulos (29, 31, 33 y 34 Deuda)
+        extra_subts = "AND subtitulo_cod IN ('29', '31', '33', '34') AND nivel = 'SUBTITULO'" if where_sql else "WHERE subtitulo_cod IN ('29', '31', '33', '34') AND nivel = 'SUBTITULO'"
         query_subts = f"""
         SELECT
             subtitulo_cod,
@@ -405,6 +412,15 @@ class DatabaseManager:
         s33 = rows_subts.get("33", {"vig": 0.0, "ejec": 0.0})
         pct_s33 = round((s33["ejec"] / s33["vig"] * 100), 2) if s33["vig"] > 0 else 0.0
 
+        # Subtítulo 34 (Servicio de la Deuda)
+        s34 = rows_subts.get("34", {"vig": 0.0, "ejec": 0.0})
+        pct_s34 = round((s34["ejec"] / s34["vig"] * 100), 2) if s34["vig"] > 0 else 0.0
+
+        # Capital + Deuda (29 + 31 + 33 + 34)
+        cap_deuda_vig = inv_tot_vig + s34["vig"]
+        cap_deuda_ejec = inv_tot_ejec + s34["ejec"]
+        pct_cap_deuda = round((cap_deuda_ejec / cap_deuda_vig * 100), 2) if cap_deuda_vig > 0 else 0.0
+
         return {
             "presupuesto_inicial": tot_ini,
             "presupuesto_vigente": tot_vig,
@@ -415,6 +431,10 @@ class DatabaseManager:
             "capital_vigente": inv_tot_vig,
             "capital_ejecucion": inv_tot_ejec,
             "pct_capital": pct_inv_tot,
+            # Total Capital + Deuda (29 + 31 + 33 + 34)
+            "capital_deuda_vigente": cap_deuda_vig,
+            "capital_deuda_ejecucion": cap_deuda_ejec,
+            "pct_capital_deuda": pct_cap_deuda,
             # Subtítulo 29 (Activos No Financieros)
             "subt29_vigente": s29["vig"],
             "subt29_ejecucion": s29["ejec"],
@@ -426,7 +446,11 @@ class DatabaseManager:
             # Subtítulo 33 (Transferencias de Capital)
             "subt33_vigente": s33["vig"],
             "subt33_ejecucion": s33["ejec"],
-            "pct_subt33": pct_s33
+            "pct_subt33": pct_s33,
+            # Subtítulo 34 (Servicio de la Deuda)
+            "subt34_vigente": s34["vig"],
+            "subt34_ejecucion": s34["ejec"],
+            "pct_subt34": pct_s34
         }
 
     def get_subtitulos_breakdown(self, year=None, ministerio=None, programas=None, periodo=None, moneda="Pesos"):
@@ -458,7 +482,7 @@ class DatabaseManager:
             return pd.read_sql_query(query, conn, params=params)
 
     def get_programas_comparison(self, year=None, ministerio=None, programas=None, periodo=None, moneda="Pesos"):
-        """Comparación del gasto y avance entre programas/servicios."""
+        """Comparativa resumida de desempeño presupuestario por programa/servicio."""
         where_sql, params = self._build_where_clause(
             year=year, ministerio=ministerio, programas=programas,
             periodos=[periodo] if periodo else None, moneda=moneda
@@ -485,12 +509,12 @@ class DatabaseManager:
             return pd.read_sql_query(query, conn, params=params)
 
     def get_inversiones_summary(self, year=None, ministerio=None, programas=None, periodo=None, subtitulos=None, moneda="Pesos"):
-        """Desglose específico de gastos de capital e inversión (Subtítulos 29, 31, 33) por programa, subtítulo e ítem."""
+        """Desglose específico de gastos de capital e inversión y deuda (Subtítulos 29, 31, 33, 34) por programa, subtítulo e ítem."""
         where_sql, params = self._build_where_clause(
             year=year, ministerio=ministerio, programas=programas,
             periodos=[periodo] if periodo else None, moneda=moneda
         )
-        target_subts = subtitulos if subtitulos else ["29", "31", "33"]
+        target_subts = subtitulos if subtitulos else ["29", "31", "33", "34"]
         if isinstance(target_subts, str):
             target_subts = [target_subts]
         placeholders = ",".join(["?"] * len(target_subts))
@@ -1560,5 +1584,321 @@ class DatabaseManager:
         res = res[(res["ini_mm"] > 0) | (res["fin_mm"] > 0)].sort_values("dif_mm", ascending=False)
         return res.reset_index()
 
+    def get_budget_variations_summary(self, year=2026, base_period="Abril", comp_period="Julio", moneda="Pesos", exclude_tesoro=True, ministerios=None):
+        """
+        Calcula de forma exacta las modificaciones presupuestarias (recortes y aumentos en presupuesto vigente)
+        entre dos periodos de corte (o Presupuesto Inicial de Ley vs Corte) para un año determinado
+        a nivel de Ministerio, Servicio/Programa y Subtítulo.
+        """
+        extra_cond = "AND ministerio != 'Tesoro Público' AND ministerio NOT LIKE '%Tesoro P%blico%'" if exclude_tesoro else ""
+        
+        filter_mins_sql = ""
+        params_mins = []
+        if ministerios:
+            if isinstance(ministerios, str):
+                ministerios = [ministerios]
+            placeholders = ",".join(["?"] * len(ministerios))
+            filter_mins_sql = f"AND ministerio IN ({placeholders})"
+            params_mins = list(ministerios)
 
+        is_ini_base = str(base_period).strip() in ["Presupuesto Inicial", "Presupuesto Inicial (Ley)", "Inicial", "Ley de Presupuestos"]
+        col_base = "presupuesto_inicial" if is_ini_base else "presupuesto_vigente"
+        base_p_arg = comp_period if is_ini_base else base_period
 
+        with self.get_connection() as conn:
+            # 1. Agregación a nivel de Ministerio (TIPO = GASTOS)
+            q_mins = f"""
+            SELECT 
+                ministerio,
+                SUM(CASE WHEN periodo = ? THEN {col_base} ELSE 0 END) as vigente_base,
+                SUM(CASE WHEN periodo = ? THEN presupuesto_vigente ELSE 0 END) as vigente_comp
+            FROM ejecucion_consolidada
+            WHERE year = ? AND nivel = 'TIPO' AND tipo = 'GASTOS' AND moneda = ? {extra_cond} {filter_mins_sql}
+            GROUP BY ministerio
+            HAVING vigente_base > 0 OR vigente_comp > 0
+            ORDER BY (vigente_comp - vigente_base) ASC
+            """
+            p_mins = [base_p_arg, comp_period, year, moneda] + params_mins
+            df_mins = pd.read_sql_query(q_mins, conn, params=p_mins)
+            
+            if not df_mins.empty:
+                df_mins["delta"] = df_mins["vigente_comp"] - df_mins["vigente_base"]
+                df_mins["pct_change"] = df_mins.apply(lambda r: (r["delta"] / r["vigente_base"] * 100.0) if r["vigente_base"] > 0 else 0.0, axis=1)
+                df_mins["status"] = df_mins["delta"].apply(lambda d: "🔻 Recorte" if d < -1e-4 else ("🔺 Aumento" if d > 1e-4 else "➖ Sin cambio"))
+            else:
+                df_mins = pd.DataFrame(columns=["ministerio", "vigente_base", "vigente_comp", "delta", "pct_change", "status"])
+
+            # 2. Agregación a nivel de Servicio / Programa
+            q_serv = f"""
+            SELECT 
+                ministerio,
+                programa,
+                SUM(CASE WHEN periodo = ? THEN {col_base} ELSE 0 END) as vigente_base,
+                SUM(CASE WHEN periodo = ? THEN presupuesto_vigente ELSE 0 END) as vigente_comp
+            FROM ejecucion_consolidada
+            WHERE year = ? AND nivel = 'TIPO' AND tipo = 'GASTOS' AND moneda = ? {extra_cond} {filter_mins_sql}
+            GROUP BY ministerio, programa
+            HAVING vigente_base > 0 OR vigente_comp > 0
+            ORDER BY (vigente_comp - vigente_base) ASC
+            """
+            df_serv = pd.read_sql_query(q_serv, conn, params=p_mins)
+            if not df_serv.empty:
+                df_serv["delta"] = df_serv["vigente_comp"] - df_serv["vigente_base"]
+                df_serv["pct_change"] = df_serv.apply(lambda r: (r["delta"] / r["vigente_base"] * 100.0) if r["vigente_base"] > 0 else 0.0, axis=1)
+                df_serv["status"] = df_serv["delta"].apply(lambda d: "🔻 Recorte" if d < -1e-4 else ("🔺 Aumento" if d > 1e-4 else "➖ Sin cambio"))
+            else:
+                df_serv = pd.DataFrame(columns=["ministerio", "programa", "vigente_base", "vigente_comp", "delta", "pct_change", "status"])
+
+            # 3. Agregación a nivel de Subtítulos Económicos
+            q_subt = f"""
+            SELECT 
+                subtitulo_cod,
+                subtitulo_nom,
+                SUM(CASE WHEN periodo = ? THEN {col_base} ELSE 0 END) as vigente_base,
+                SUM(CASE WHEN periodo = ? THEN presupuesto_vigente ELSE 0 END) as vigente_comp
+            FROM ejecucion_consolidada
+            WHERE year = ? AND nivel = 'SUBTITULO' AND moneda = ? {extra_cond} {filter_mins_sql}
+            GROUP BY subtitulo_cod, subtitulo_nom
+            HAVING vigente_base > 0 OR vigente_comp > 0
+            ORDER BY (vigente_comp - vigente_base) ASC
+            """
+            df_subt = pd.read_sql_query(q_subt, conn, params=p_mins)
+            if not df_subt.empty:
+                df_subt["delta"] = df_subt["vigente_comp"] - df_subt["vigente_base"]
+                df_subt["pct_change"] = df_subt.apply(lambda r: (r["delta"] / r["vigente_base"] * 100.0) if r["vigente_base"] > 0 else 0.0, axis=1)
+                df_subt["status"] = df_subt["delta"].apply(lambda d: "🔻 Recorte" if d < -1e-4 else ("🔺 Aumento" if d > 1e-4 else "➖ Sin cambio"))
+            else:
+                df_subt = pd.DataFrame(columns=["subtitulo_cod", "subtitulo_nom", "vigente_base", "vigente_comp", "delta", "pct_change", "status"])
+
+            # 4. Agregación detallada a nivel de Ítems / Asignaciones (para la matriz interactiva)
+            q_detail = f"""
+            SELECT 
+                ministerio,
+                programa,
+                subtitulo_cod,
+                subtitulo_nom,
+                COALESCE(NULLIF(item_cod, ''), '-') as item_cod,
+                COALESCE(NULLIF(item_nom, ''), NULLIF(clasificacion, ''), subtitulo_nom) as item_nom,
+                SUM(CASE WHEN periodo = ? THEN {col_base} ELSE 0 END) as vigente_base,
+                SUM(CASE WHEN periodo = ? THEN presupuesto_vigente ELSE 0 END) as vigente_comp
+            FROM ejecucion_consolidada
+            WHERE year = ? AND nivel IN ('ITEM', 'SUBTITULO') AND moneda = ? {extra_cond} {filter_mins_sql}
+            GROUP BY ministerio, programa, subtitulo_cod, subtitulo_nom, item_cod, item_nom
+            HAVING vigente_base > 0 OR vigente_comp > 0
+            ORDER BY (vigente_comp - vigente_base) ASC
+            """
+            df_detail = pd.read_sql_query(q_detail, conn, params=p_mins)
+            if not df_detail.empty:
+                df_detail["delta"] = df_detail["vigente_comp"] - df_detail["vigente_base"]
+                df_detail["pct_change"] = df_detail.apply(lambda r: (r["delta"] / r["vigente_base"] * 100.0) if r["vigente_base"] > 0 else 0.0, axis=1)
+                df_detail["status"] = df_detail["delta"].apply(lambda d: "🔻 Recorte" if d < -1e-4 else ("🔺 Aumento" if d > 1e-4 else "➖ Sin cambio"))
+            else:
+                df_detail = pd.DataFrame(columns=["ministerio", "programa", "subtitulo_cod", "subtitulo_nom", "item_cod", "item_nom", "vigente_base", "vigente_comp", "delta", "pct_change", "status"])
+
+        # Cálculo de KPIs consolidados
+        recortes_total = float(df_mins[df_mins["delta"] < 0]["delta"].sum()) if not df_mins.empty else 0.0
+        aumentos_total = float(df_mins[df_mins["delta"] > 0]["delta"].sum()) if not df_mins.empty else 0.0
+        delta_neto = float(df_mins["delta"].sum()) if not df_mins.empty else 0.0
+        vigente_base_tot = float(df_mins["vigente_base"].sum()) if not df_mins.empty else 0.0
+        vigente_comp_tot = float(df_mins["vigente_comp"].sum()) if not df_mins.empty else 0.0
+        pct_neto = (delta_neto / vigente_base_tot * 100.0) if vigente_base_tot > 0 else 0.0
+
+        kpis = {
+            "recortes_total": recortes_total,
+            "aumentos_total": aumentos_total,
+            "delta_neto": delta_neto,
+            "pct_neto": pct_neto,
+            "vigente_base_tot": vigente_base_tot,
+            "vigente_comp_tot": vigente_comp_tot,
+            "mins_recortados": int((df_mins["delta"] < -1e-4).sum()) if not df_mins.empty else 0,
+            "mins_aumentados": int((df_mins["delta"] > 1e-4).sum()) if not df_mins.empty else 0,
+            "servicios_recortados": int((df_serv["delta"] < -1e-4).sum()) if not df_serv.empty else 0,
+            "servicios_aumentados": int((df_serv["delta"] > 1e-4).sum()) if not df_serv.empty else 0
+        }
+
+        return {
+            "kpis": kpis,
+            "ministerios": df_mins,
+            "servicios": df_serv,
+            "subtitulos": df_subt,
+            "detalle": df_detail
+        }
+
+    def get_budget_variations_timeline(self, year=2026, base_period="Abril", comp_period="Julio", moneda="Pesos", exclude_tesoro=True, ministerios=None):
+        """
+        Retorna la evolución mensual cronológica de recortes, aumentos y variación acumulada
+        en el presupuesto vigente desde base_period (o Presupuesto Inicial) hasta comp_period.
+        """
+        order_months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+        extra_cond = "AND ministerio != 'Tesoro Público' AND ministerio NOT LIKE '%Tesoro P%blico%'" if exclude_tesoro else ""
+        
+        min_cond = ""
+        min_params = []
+        if ministerios:
+            if isinstance(ministerios, str):
+                ministerios = [ministerios]
+            ph = ",".join(["?" for _ in ministerios])
+            min_cond = f"AND ministerio IN ({ph})"
+            min_params = list(ministerios)
+
+        is_ini_base = str(base_period).strip() in ["Presupuesto Inicial", "Presupuesto Inicial (Ley)", "Inicial", "Ley de Presupuestos"]
+
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute(f"SELECT DISTINCT periodo FROM ejecucion_consolidada WHERE year = ? AND nivel = 'TIPO' AND tipo = 'GASTOS' AND moneda = ? {extra_cond} {min_cond}", [year, moneda] + min_params)
+            loaded_months = [r[0] for r in c.fetchall()]
+
+            avail_in_order = [m for m in order_months if m in loaded_months]
+            if comp_period not in avail_in_order:
+                return pd.DataFrame()
+
+            rows = []
+
+            if is_ini_base:
+                # Base es el Presupuesto Inicial aprobado
+                c.execute(f"""
+                    SELECT SUM(presupuesto_inicial) 
+                    FROM ejecucion_consolidada 
+                    WHERE year = ? AND periodo = ? AND nivel = 'TIPO' AND tipo = 'GASTOS' AND moneda = ? {extra_cond} {min_cond}
+                """, [year, comp_period, moneda] + min_params)
+                base_vigente = c.fetchone()[0] or 0.0
+
+                rows.append({
+                    "periodo": "Ley Inicial",
+                    "step_label": "🏛️ Ley Inicial",
+                    "vigente": base_vigente,
+                    "delta_step": 0.0,
+                    "recortes_step": 0.0,
+                    "aumentos_step": 0.0,
+                    "cum_delta": 0.0,
+                    "pct_cum": 0.0
+                })
+
+                idx_comp = avail_in_order.index(comp_period)
+                months_window = avail_in_order[:idx_comp+1]
+
+                for i, m in enumerate(months_window):
+                    c.execute(f"""
+                        SELECT SUM(presupuesto_vigente) 
+                        FROM ejecucion_consolidada 
+                        WHERE year = ? AND periodo = ? AND nivel = 'TIPO' AND tipo = 'GASTOS' AND moneda = ? {extra_cond} {min_cond}
+                    """, [year, m, moneda] + min_params)
+                    vig = c.fetchone()[0] or 0.0
+
+                    if i == 0:
+                        # Ley Inicial -> Enero
+                        q_step = f"""
+                            SELECT 
+                                ministerio,
+                                SUM(presupuesto_inicial) as v_prev,
+                                SUM(presupuesto_vigente) as v_curr
+                            FROM ejecucion_consolidada
+                            WHERE year = ? AND nivel = 'TIPO' AND tipo = 'GASTOS' AND moneda = ? {extra_cond} {min_cond}
+                              AND periodo = ?
+                            GROUP BY ministerio
+                        """
+                        df_step = pd.read_sql_query(q_step, conn, params=[year, moneda] + min_params + [m])
+                        step_label = f"🏛️ Ley -> {m}"
+                    else:
+                        prev_m = months_window[i-1]
+                        q_step = f"""
+                            SELECT 
+                                ministerio,
+                                SUM(CASE WHEN periodo = ? THEN presupuesto_vigente ELSE 0 END) as v_prev,
+                                SUM(CASE WHEN periodo = ? THEN presupuesto_vigente ELSE 0 END) as v_curr
+                            FROM ejecucion_consolidada
+                            WHERE year = ? AND nivel = 'TIPO' AND tipo = 'GASTOS' AND moneda = ? {extra_cond} {min_cond}
+                              AND periodo IN (?, ?)
+                            GROUP BY ministerio
+                        """
+                        df_step = pd.read_sql_query(q_step, conn, params=[prev_m, m, year, moneda] + min_params + [prev_m, m])
+                        step_label = f"{prev_m} -> {m}"
+
+                    df_step["delta"] = df_step["v_curr"] - df_step["v_prev"]
+                    step_recortes = float(df_step[df_step["delta"] < 0]["delta"].sum())
+                    step_aumentos = float(df_step[df_step["delta"] > 0]["delta"].sum())
+                    step_delta = vig - rows[-1]["vigente"]
+
+                    cum_delta = vig - base_vigente
+                    pct_cum = (cum_delta / base_vigente * 100.0) if base_vigente > 0 else 0.0
+
+                    rows.append({
+                        "periodo": m,
+                        "step_label": step_label,
+                        "vigente": vig,
+                        "delta_step": step_delta,
+                        "recortes_step": step_recortes,
+                        "aumentos_step": step_aumentos,
+                        "cum_delta": cum_delta,
+                        "pct_cum": pct_cum
+                    })
+
+                return pd.DataFrame(rows)
+
+            else:
+                if base_period not in avail_in_order:
+                    return pd.DataFrame()
+
+                idx_base = avail_in_order.index(base_period)
+                idx_comp = avail_in_order.index(comp_period)
+                if idx_base > idx_comp:
+                    months_window = avail_in_order[idx_comp:idx_base+1]
+                else:
+                    months_window = avail_in_order[idx_base:idx_comp+1]
+
+                base_vigente = None
+
+                for i, m in enumerate(months_window):
+                    c.execute(f"""
+                        SELECT SUM(presupuesto_vigente) 
+                        FROM ejecucion_consolidada 
+                        WHERE year = ? AND periodo = ? AND nivel = 'TIPO' AND tipo = 'GASTOS' AND moneda = ? {extra_cond} {min_cond}
+                    """, [year, m, moneda] + min_params)
+                    vig = c.fetchone()[0] or 0.0
+
+                    if i == 0:
+                        base_vigente = vig
+                        rows.append({
+                            "periodo": m,
+                            "step_label": f"Base ({m})",
+                            "vigente": vig,
+                            "delta_step": 0.0,
+                            "recortes_step": 0.0,
+                            "aumentos_step": 0.0,
+                            "cum_delta": 0.0,
+                            "pct_cum": 0.0
+                        })
+                    else:
+                        prev_m = months_window[i-1]
+                        q_step = f"""
+                            SELECT 
+                                ministerio,
+                                SUM(CASE WHEN periodo = ? THEN presupuesto_vigente ELSE 0 END) as v_prev,
+                                SUM(CASE WHEN periodo = ? THEN presupuesto_vigente ELSE 0 END) as v_curr
+                            FROM ejecucion_consolidada
+                            WHERE year = ? AND nivel = 'TIPO' AND tipo = 'GASTOS' AND moneda = ? {extra_cond} {min_cond}
+                              AND periodo IN (?, ?)
+                            GROUP BY ministerio
+                        """
+                        df_step = pd.read_sql_query(q_step, conn, params=[prev_m, m, year, moneda] + min_params + [prev_m, m])
+                        df_step["delta"] = df_step["v_curr"] - df_step["v_prev"]
+
+                        step_recortes = float(df_step[df_step["delta"] < 0]["delta"].sum())
+                        step_aumentos = float(df_step[df_step["delta"] > 0]["delta"].sum())
+                        step_delta = vig - rows[-1]["vigente"]
+
+                        cum_delta = vig - base_vigente
+                        pct_cum = (cum_delta / base_vigente * 100.0) if base_vigente > 0 else 0.0
+
+                        rows.append({
+                            "periodo": m,
+                            "step_label": f"{prev_m} -> {m}",
+                            "vigente": vig,
+                            "delta_step": step_delta,
+                            "recortes_step": step_recortes,
+                            "aumentos_step": step_aumentos,
+                            "cum_delta": cum_delta,
+                            "pct_cum": pct_cum
+                        })
+
+                return pd.DataFrame(rows)

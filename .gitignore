@@ -38,3 +38,7 @@ tunnel.log
 Thumbs.db
 scratch/
 app_backup_*.py
+
+# Archivos temporales y backups de Excel
+*_BACKUP.xlsx
+~$*.xlsx

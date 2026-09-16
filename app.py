@@ -17,6 +17,7 @@ importlib.reload(src.db_manager)
 from src.db_manager import DatabaseManager
 from src.dipres_scraper import DipresScraper
 from src.excel_parser import DipresExcelParser
+from src.pinera_view import render_pinera_programs_view
 
 import streamlit.components.v1 as components
 
@@ -611,6 +612,9 @@ def get_kpis_safe(db_inst, year, ministerio, programas, periodo, moneda):
         "capital_vigente": raw.get("capital_vigente", raw.get("inversion_vigente", 0.0)) or 0.0,
         "capital_ejecucion": raw.get("capital_ejecucion", raw.get("inversion_ejecucion", 0.0)) or 0.0,
         "pct_capital": raw.get("pct_capital", raw.get("pct_inversion", 0.0)) or 0.0,
+        "capital_deuda_vigente": raw.get("capital_deuda_vigente", raw.get("capital_vigente", 0.0)) or 0.0,
+        "capital_deuda_ejecucion": raw.get("capital_deuda_ejecucion", raw.get("capital_ejecucion", 0.0)) or 0.0,
+        "pct_capital_deuda": raw.get("pct_capital_deuda", raw.get("pct_capital", 0.0)) or 0.0,
         "subt31_vigente": raw.get("subt31_vigente", 0.0) or 0.0,
         "subt31_ejecucion": raw.get("subt31_ejecucion", 0.0) or 0.0,
         "pct_subt31": raw.get("pct_subt31", 0.0) or 0.0,
@@ -619,7 +623,10 @@ def get_kpis_safe(db_inst, year, ministerio, programas, periodo, moneda):
         "pct_subt29": raw.get("pct_subt29", 0.0) or 0.0,
         "subt33_vigente": raw.get("subt33_vigente", 0.0) or 0.0,
         "subt33_ejecucion": raw.get("subt33_ejecucion", 0.0) or 0.0,
-        "pct_subt33": raw.get("pct_subt33", 0.0) or 0.0
+        "pct_subt33": raw.get("pct_subt33", 0.0) or 0.0,
+        "subt34_vigente": raw.get("subt34_vigente", 0.0) or 0.0,
+        "subt34_ejecucion": raw.get("subt34_ejecucion", 0.0) or 0.0,
+        "pct_subt34": raw.get("pct_subt34", 0.0) or 0.0
     }
 
 def render_kpi_card_html(title, value, subtitle, icon="📊", theme="blue", progress=None, badge=None):
@@ -669,6 +676,15 @@ def render_kpi_card_html(title, value, subtitle, icon="📊", theme="blue", prog
             "pill_bg": "#f5f3ff",
             "pill_text": "#5b21b6",
             "pill_border": "#ddd6fe"
+        },
+        "rose": {
+            "border_top": "#e11d48",
+            "icon_bg": "#fff1f2",
+            "icon_color": "#be123c",
+            "bar_fill": "linear-gradient(90deg, #fb7185, #e11d48)",
+            "pill_bg": "#fff1f2",
+            "pill_text": "#9f1239",
+            "pill_border": "#fecdd3"
         }
     }
     c = palette.get(theme, palette["blue"])
@@ -1385,27 +1401,41 @@ def render_national_tops_view(
     years_avail_start = [y for y in db_loaded_years if y < max_loaded_yr]
     years_avail_end = [y for y in db_loaded_years if y > min_loaded_yr]
 
-    # Controles del Gráfico de Crecimiento (Accesos Rápidos)
-    c_gr_pre1, c_gr_pre2 = st.columns([6.5, 3.5])
-    with c_gr_pre1:
-        st.markdown("**⚡ Accesos Rápidos de Tramos:**")
-        preset_cols = st.columns(4)
-        with preset_cols[0]:
-            if st.button("🎯 2022 - 2026 (Por Defecto)", key="btn_gr_def", use_container_width=True):
-                st.session_state["gr_sel_start"] = 2022 if 2022 in years_avail_start else min_loaded_yr
-                st.session_state["gr_sel_end"] = 2026 if 2026 in years_avail_end else max_loaded_yr
-        with preset_cols[1]:
-            if st.button(f"🏛️ {min_loaded_yr} - {max_loaded_yr} (Histórico)", key="btn_gr_hist", use_container_width=True):
-                st.session_state["gr_sel_start"] = min_loaded_yr
-                st.session_state["gr_sel_end"] = max_loaded_yr
-        with preset_cols[2]:
-            if st.button("⚡ 2024 - 2026 (Bienio)", key="btn_gr_2426", use_container_width=True):
-                st.session_state["gr_sel_start"] = 2024 if 2024 in years_avail_start else min_loaded_yr
-                st.session_state["gr_sel_end"] = 2026 if 2026 in years_avail_end else max_loaded_yr
-        with preset_cols[3]:
-            if st.button("📊 2018 - 2022 (Periodo)", key="btn_gr_1822", use_container_width=True):
-                st.session_state["gr_sel_start"] = 2018 if 2018 in years_avail_start else min_loaded_yr
-                st.session_state["gr_sel_end"] = 2022 if 2022 in years_avail_end else max_loaded_yr
+    # Controles del Gráfico de Crecimiento (Accesos Rápidos por Periodos Presidenciales)
+    st.markdown("**⚡ Accesos Rápidos de Tramos Presidenciales:**")
+    preset_cols = st.columns(4)
+    with preset_cols[0]:
+        if st.button("🇨🇱 Boric (2022 - 2026)", key="btn_gr_boric", use_container_width=True, help="Tramo Gabriel Boric: Enero 2022 a Enero 2026"):
+            st.session_state["gr_sel_start"] = 2022 if 2022 in years_avail_start else min_loaded_yr
+            st.session_state["gr_sel_end"] = 2026 if 2026 in years_avail_end else max_loaded_yr
+            st.session_state["gr_periodo_sel"] = "Enero"
+            st.rerun()
+    with preset_cols[1]:
+        if st.button("🏛️ Piñera II (2018 - 2022)", key="btn_gr_pinera2", use_container_width=True, help="Tramo Sebastián Piñera II: Enero 2018 a Enero 2022"):
+            st.session_state["gr_sel_start"] = 2018 if 2018 in years_avail_start else min_loaded_yr
+            st.session_state["gr_sel_end"] = 2022 if 2022 in years_avail_end else max_loaded_yr
+            st.session_state["gr_periodo_sel"] = "Enero"
+            st.rerun()
+    with preset_cols[2]:
+        if st.button("🌹 Bachelet II (2014 - 2018)", key="btn_gr_bachelet2", use_container_width=True, help="Tramo Michelle Bachelet II: Enero 2014 a Enero 2018"):
+            st.session_state["gr_sel_start"] = 2014 if 2014 in years_avail_start else min_loaded_yr
+            st.session_state["gr_sel_end"] = 2018 if 2018 in years_avail_end else max_loaded_yr
+            st.session_state["gr_periodo_sel"] = "Enero"
+            st.rerun()
+    with preset_cols[3]:
+        if st.button("🏢 Piñera I (2010 - 2014)", key="btn_gr_pinera1", use_container_width=True, help="Tramo Sebastián Piñera I: Enero 2010 a Enero 2014"):
+            if 2010 in years_avail_start:
+                st.session_state["gr_sel_start"] = 2010
+                st.session_state["gr_sel_end"] = 2014
+                st.session_state["gr_periodo_sel"] = "Enero"
+                st.rerun()
+            else:
+                st.session_state["gr_pinera1_msg"] = True
+                st.rerun()
+
+    if st.session_state.get("gr_pinera1_msg"):
+        st.info("ℹ️ **Periodo Piñera I (2010 - 2014):** La base de datos DIPRES consolidada contiene registros a partir de **2014** (Gobierno Bachelet II en adelante). Para analizar dicho tramo se requiere cargar los reportes históricos previos a 2014.")
+        st.session_state["gr_pinera1_msg"] = False
 
     # Session state defaults
     if "gr_sel_start" not in st.session_state or st.session_state["gr_sel_start"] not in years_avail_start:
@@ -1435,10 +1465,13 @@ def render_national_tops_view(
         common_periods = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
         if gr_end == 2026:
             common_periods = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio']
+        if "gr_periodo_sel" not in st.session_state or st.session_state["gr_periodo_sel"] not in common_periods:
+            st.session_state["gr_periodo_sel"] = "Enero" if "Enero" in common_periods else common_periods[0]
+        period_idx = common_periods.index(st.session_state["gr_periodo_sel"])
         gr_periodo = st.selectbox(
             "Mes de Corte",
             options=common_periods,
-            index=common_periods.index("Junio") if "Junio" in common_periods else 0,
+            index=period_idx,
             key="gr_periodo_sel",
             help="Compara presupuestos vigentes homologados al mismo mes del año."
         )
@@ -2842,6 +2875,540 @@ def render_national_tops_view(
     )
 
 # ==============================================================================
+# VENTANA DE ANÁLISIS: SEGUIMIENTO DE RECORTES Y AUMENTOS PRESUPUESTARIOS
+# ==============================================================================
+def clean_min_name(name):
+    if not name:
+        return ""
+    n = str(name).strip()
+    prefixes = ["MINISTERIO DE ", "MINISTERIO DEL ", "MINISTERIO DE LA ", "MINISTERIO "]
+    for p in prefixes:
+        if n.upper().startswith(p):
+            n = n[len(p):]
+            break
+    return n
+
+def format_prog_label(label, max_len=30):
+    if not label:
+        return ""
+    s = str(label).strip()
+    return s if len(s) <= max_len else s[:max_len-3] + "..."
+
+def render_budget_variations_view(
+    year=2026,
+    base_period="Abril",
+    comp_period="Julio",
+    moneda="Pesos",
+    exclude_tesoro=True,
+    filter_mins=None
+):
+    """
+    Renderiza la ventana ejecutiva de Auditoría y Seguimiento de Modificaciones Presupuestarias
+    (Recortes y Aumentos de Presupuesto Vigente) entre periodos.
+    """
+    # 1. Header Box
+    st.markdown(f"""
+    <div class="header-box">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div>
+                <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 5px;">
+                    <span class="header-title-text">✂️ Seguimiento de Recortes y Aumentos Presupuestarios</span>
+                    <span class="year-pill-hero">
+                        <span class="year-icon">📅</span> Presupuesto {year}
+                    </span>
+                </div>
+                <div class="header-sub-text">Periodo Base: <b>{base_period}</b> ➔ Corte: <b>{comp_period}</b> · Moneda: <b>{moneda}</b> · Alcance: <b>{'Nacional' if not filter_mins else ', '.join(filter_mins[:2])}</b></div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span class="pill-badge" style="background-color: #eff6ff; border-color: #93c5fd; color: #1d4ed8 !important;">📊 Auditoría de Decretos</span>
+                <span class="pill-badge" style="background-color: #ecfdf5; border-color: #a7f3d0; color: #047857 !important;">{'🛡️ Sin Tesoro Público' if exclude_tesoro else '🏛️ Incluye Tesoro Público'}</span>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 2. Carga de Datos desde DatabaseManager
+    data = db.get_budget_variations_summary(
+        year=year,
+        base_period=base_period,
+        comp_period=comp_period,
+        moneda=moneda,
+        exclude_tesoro=exclude_tesoro,
+        ministerios=filter_mins
+    )
+    kpis = data["kpis"]
+    df_mins = data["ministerios"]
+    df_serv = data["servicios"]
+    df_subt = data["subtitulos"]
+    df_detail = data["detalle"]
+
+    if df_mins.empty:
+        st.warning(f"⚠️ No hay registros comparativos en la Base de Datos para el año **{year}** entre los periodos **{base_period}** y **{comp_period}**.")
+        st.info("💡 Asegúrate de haber descargado y procesado los informes correspondientes a ambos periodos desde la pestaña **Catálogo & Scraper DIPRES**.")
+        return
+
+    clean_base_label = "Ley Inicial" if "Inicial" in str(base_period) else base_period
+
+    # 3. Tarjetas de Métricas Ejecutivas (KPIs de Alto Impacto)
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    with c1:
+        st.markdown(render_kpi_card_html(
+            title="Total Recortes Netos",
+            value=format_currency(abs(kpis["recortes_total"])),
+            subtitle="Disminuciones de Presupuesto Vigente",
+            icon="🔻",
+            theme="rose",
+            badge=f"{kpis['mins_recortados']} ministerios recortados"
+        ), unsafe_allow_html=True)
+    with c2:
+        st.markdown(render_kpi_card_html(
+            title="Total Aumentos Netos",
+            value=format_currency(kpis["aumentos_total"]),
+            subtitle="Suplementaciones y Expansiones",
+            icon="🔺",
+            theme="green",
+            badge=f"{kpis['mins_aumentados']} ministerios aumentados"
+        ), unsafe_allow_html=True)
+    with c3:
+        theme_neto = "green" if kpis["delta_neto"] > 0 else ("rose" if kpis["delta_neto"] < 0 else "blue")
+        st.markdown(render_kpi_card_html(
+            title="Variación Neta Global",
+            value=format_currency(kpis["delta_neto"]),
+            subtitle=f"Base: {format_currency(kpis['vigente_base_tot'])}",
+            icon="⚖️",
+            theme=theme_neto,
+            badge=f"{kpis['pct_neto']:+.2f}% neto vs {clean_base_label}"
+        ), unsafe_allow_html=True)
+    with c4:
+        st.markdown(render_kpi_card_html(
+            title="Servicios Afectados",
+            value=f"{kpis['servicios_recortados']} 🔻 / {kpis['servicios_aumentados']} 🔺",
+            subtitle="Direcciones con Modificaciones",
+            icon="🏢",
+            theme="purple",
+            badge=f"{len(df_serv)} servicios analizados"
+        ), unsafe_allow_html=True)
+
+    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+
+    # 4. SECCIÓN 1: EVOLUCIÓN MENSUAL DE VARIACIONES
+    st.markdown(f"##### 📅 1. Evolución Mensual de Modificaciones Presupuestarias ({clean_base_label} ➔ {comp_period})")
+    st.caption(f"Trazabilidad de modificaciones entre cada hito mensual consecutivo desde **{clean_base_label}** hasta **{comp_period} {year}**.")
+
+    df_timeline = db.get_budget_variations_timeline(
+        year=year,
+        base_period=base_period,
+        comp_period=comp_period,
+        moneda=moneda,
+        exclude_tesoro=exclude_tesoro,
+        ministerios=filter_mins
+    )
+
+    if not df_timeline.empty and len(df_timeline) > 1:
+        steps_df = df_timeline.iloc[1:].copy()
+        
+        c_tl1, c_tl2 = st.columns([6.2, 3.8], gap="medium")
+        with c_tl1:
+            fig_tl = go.Figure()
+            # Aumentos del mes (Barras verdes)
+            fig_tl.add_trace(go.Bar(
+                name="Aumentos Netos del Mes",
+                x=steps_df["step_label"],
+                y=steps_df["aumentos_step"] * 1000 / 1e9,
+                marker_color="#10b981",
+                hovertemplate="<b>%{x}</b><br>Aumentos Otorgados: <b>$%{y:,.1f} MM</b><extra></extra>"
+            ))
+            # Recortes del mes (Barras rojas)
+            fig_tl.add_trace(go.Bar(
+                name="Recortes Netos del Mes",
+                x=steps_df["step_label"],
+                y=steps_df["recortes_step"] * 1000 / 1e9,
+                marker_color="#ef4444",
+                hovertemplate="<b>%{x}</b><br>Recortes Aplicados: <b>$%{y:,.1f} MM</b><extra></extra>"
+            ))
+            # Variación acumulada (Línea azul)
+            fig_tl.add_trace(go.Scatter(
+                name="Variación Acumulada vs Base",
+                x=steps_df["step_label"],
+                y=steps_df["cum_delta"] * 1000 / 1e9,
+                mode="lines+markers+text",
+                text=[f"${v:+,.1f} MM" for v in (steps_df["cum_delta"] * 1000 / 1e9)],
+                textposition="top center",
+                line=dict(color="#2563eb", width=3),
+                marker=dict(size=8, color="#1d4ed8"),
+                hovertemplate="<b>%{x}</b><br>Variación Acumulada: <b>$%{y:,.1f} MM</b><extra></extra>"
+            ))
+            fig_tl.update_layout(
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                barmode="relative",
+                autosize=True,
+                height=380,
+                font=dict(color="#1e293b", family="sans-serif"),
+                margin=dict(l=50, r=20, t=35, b=50),
+                legend=dict(orientation="h", y=1.15, title_text="", font=dict(size=10.5)),
+                xaxis=dict(gridcolor="#f1f5f9", linecolor="#cbd5e1"),
+                yaxis=dict(gridcolor="#f1f5f9", linecolor="#cbd5e1", title="Monto ($ MM)")
+            )
+            st.plotly_chart(fig_tl, use_container_width=True)
+
+        with c_tl2:
+            st.markdown("###### 📋 Desglose Intermensual")
+            df_tl_display = steps_df[["step_label", "aumentos_step", "recortes_step", "delta_step", "cum_delta"]].copy()
+            df_tl_display["aumentos_step"] = df_tl_display["aumentos_step"] * 1000 / 1e9
+            df_tl_display["recortes_step"] = df_tl_display["recortes_step"] * 1000 / 1e9
+            df_tl_display["delta_step"] = df_tl_display["delta_step"] * 1000 / 1e9
+            df_tl_display["cum_delta"] = df_tl_display["cum_delta"] * 1000 / 1e9
+            
+            df_tl_display.columns = ["Paso Mensual", "Aumentos ($ MM)", "Recortes ($ MM)", "Neto Mes ($ MM)", "Acumulado ($ MM)"]
+            st.dataframe(
+                df_tl_display.style.format({
+                    "Aumentos ($ MM)": "${:+,.1f}",
+                    "Recortes ($ MM)": "${:+,.1f}",
+                    "Neto Mes ($ MM)": "${:+,.1f}",
+                    "Acumulado ($ MM)": "${:+,.1f}"
+                }),
+                use_container_width=True,
+                height=320
+            )
+    else:
+        st.info(f"Para ver la evolución mensual se requieren al menos dos meses intermedios entre {base_period} y {comp_period}.")
+
+    st.markdown("---")
+
+    # 5. SECCIÓN 2: MINISTERIOS CON MÁS Y MENOS RECORTES / AUMENTOS
+    st.markdown(f"##### 🏛️ 2. Variación de Presupuesto Vigente por Ministerio ({base_period} ➔ {comp_period})")
+    st.caption("Contrasta qué carteras sufrieron los mayores recortes y cuáles experimentaron mayores expansiones presupuestarias.")
+
+    c_min1, c_min2 = st.columns([6.2, 3.8], gap="medium")
+    with c_min1:
+        df_mins_plot = df_mins.sort_values(by="delta", ascending=True).copy()
+        colors_mins = ["#ef4444" if d < 0 else "#10b981" for d in df_mins_plot["delta"]]
+        
+        fig_mins = go.Figure()
+        fig_mins.add_trace(go.Bar(
+            y=[format_prog_label(clean_min_name(m), 32) for m in df_mins_plot["ministerio"]],
+            x=df_mins_plot["delta"] * 1000 / 1e9,
+            orientation='h',
+            marker_color=colors_mins,
+            customdata=df_mins_plot[["vigente_base", "vigente_comp", "pct_change", "ministerio"]].values,
+            hovertemplate=(
+                "<b>%{customdata[3]}</b><br>"
+                f"Vigente {base_period}: <b>$%{{customdata[0]:,.0f}} M$</b><br>"
+                f"Vigente {comp_period}: <b>$%{{customdata[1]:,.0f}} M$</b><br>"
+                "Variación Neta: <b>$%{x:+,.1f} MM</b> (%{customdata[2]:+.2f}%)<extra></extra>"
+            )
+        ))
+        fig_mins.update_layout(
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            autosize=True,
+            height=max(450, len(df_mins_plot) * 22),
+            font=dict(color="#1e293b", family="sans-serif"),
+            margin=dict(l=150, r=25, t=25, b=45),
+            xaxis=dict(gridcolor="#f1f5f9", linecolor="#cbd5e1", title="Variación Neta ($ Miles de Millones - MM)", tickprefix="$ "),
+            yaxis=dict(gridcolor="#f1f5f9", linecolor="#cbd5e1", tickfont=dict(size=10.5))
+        )
+        st.plotly_chart(fig_mins, use_container_width=True)
+
+    with c_min2:
+        # Top 5 Recortes
+        st.markdown("###### 🔻 Top 5 Ministerios con Mayor Recorte")
+        df_top_recortes_mins = df_mins[df_mins["delta"] < 0].sort_values(by="delta", ascending=True).head(5)
+        if not df_top_recortes_mins.empty:
+            for _, r in df_top_recortes_mins.iterrows():
+                st.markdown(f"""
+                <div style="background-color: #fff1f2; border-left: 4px solid #e11d48; border-radius: 6px; padding: 7px 10px; margin-bottom: 6px;">
+                    <div style="font-weight: 700; color: #9f1239; font-size: 0.88rem;">{clean_min_name(r['ministerio'])}</div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.80rem; color: #475569; margin-top: 2px;">
+                        <span>Recorte: <b style="color: #e11d48;">${r['delta']*1000/1e9:+,.1f} MM</b></span>
+                        <span>Variación: <b style="color: #e11d48;">{r['pct_change']:+.2f}%</b></span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("Ningún ministerio presentó recortes en este periodo.")
+
+        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+        
+        # Top 5 Aumentos
+        st.markdown("###### 🔺 Top 5 Ministerios con Mayor Aumento")
+        df_top_aumentos_mins = df_mins[df_mins["delta"] > 0].sort_values(by="delta", ascending=False).head(5)
+        if not df_top_aumentos_mins.empty:
+            for _, r in df_top_aumentos_mins.iterrows():
+                st.markdown(f"""
+                <div style="background-color: #ecfdf5; border-left: 4px solid #10b981; border-radius: 6px; padding: 7px 10px; margin-bottom: 6px;">
+                    <div style="font-weight: 700; color: #065f46; font-size: 0.88rem;">{clean_min_name(r['ministerio'])}</div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.80rem; color: #475569; margin-top: 2px;">
+                        <span>Aumento: <b style="color: #059669;">${r['delta']*1000/1e9:+,.1f} MM</b></span>
+                        <span>Variación: <b style="color: #059669;">{r['pct_change']:+.2f}%</b></span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("Ningún ministerio presentó aumentos en este periodo.")
+
+    st.markdown("---")
+
+    # 6. SECCIÓN 3: SERVICIOS Y PROGRAMAS MÁS AFECTADOS
+    st.markdown(f"##### 🏢 3. Servicios Públicos y Programas con Mayores Modificaciones")
+    st.caption("Identifica los servicios públicos, direcciones y programas que experimentaron las mayores variaciones en su presupuesto.")
+
+    tab_serv_rec, tab_serv_aum, tab_serv_all = st.tabs([
+        "🔻 Top Servicios con Mayor Recorte",
+        "🔺 Top Servicios con Mayor Aumento",
+        "📋 Todos los Servicios Modificados"
+    ])
+
+    with tab_serv_rec:
+        df_top_rec_serv = df_serv[df_serv["delta"] < 0].sort_values(by="delta", ascending=True).head(15).copy()
+        if not df_top_rec_serv.empty:
+            df_top_rec_serv["delta_mm"] = df_top_rec_serv["delta"] * 1000 / 1e9
+            df_top_rec_serv["vigente_base_mm"] = df_top_rec_serv["vigente_base"] * 1000 / 1e9
+            df_top_rec_serv["vigente_comp_mm"] = df_top_rec_serv["vigente_comp"] * 1000 / 1e9
+            fig_s_rec = go.Figure()
+            fig_s_rec.add_trace(go.Bar(
+                y=[format_prog_label(p, 36) for p in df_top_rec_serv["programa"]],
+                x=abs(df_top_rec_serv["delta_mm"]),
+                orientation='h',
+                marker_color="#ef4444",
+                customdata=df_top_rec_serv[["ministerio", "programa", "delta_mm", "pct_change", "vigente_base_mm", "vigente_comp_mm"]].values,
+                hovertemplate="<b>%{customdata[1]}</b><br>Ministerio: %{customdata[0]}<br>Base: <b>$%{customdata[4]:,.1f} MM</b> ➔ Corte: <b>$%{customdata[5]:,.1f} MM</b><br>Recorte: <b>$%{customdata[2]:+,.1f} MM</b> (%{customdata[3]:+.2f}%)<extra></extra>"
+            ))
+            fig_s_rec.update_layout(
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                height=420,
+                autosize=True,
+                margin=dict(l=160, r=25, t=25, b=45),
+                xaxis=dict(title="Monto Recortado ($ MM)", gridcolor="#f1f5f9"),
+                yaxis=dict(autorange="reversed", gridcolor="#f1f5f9", tickfont=dict(size=10.5))
+            )
+            st.plotly_chart(fig_s_rec, use_container_width=True)
+        else:
+            st.info("No se registraron servicios con recortes en el tramo evaluado.")
+
+    with tab_serv_aum:
+        df_top_aum_serv = df_serv[df_serv["delta"] > 0].sort_values(by="delta", ascending=False).head(15).copy()
+        if not df_top_aum_serv.empty:
+            df_top_aum_serv["delta_mm"] = df_top_aum_serv["delta"] * 1000 / 1e9
+            df_top_aum_serv["vigente_base_mm"] = df_top_aum_serv["vigente_base"] * 1000 / 1e9
+            df_top_aum_serv["vigente_comp_mm"] = df_top_aum_serv["vigente_comp"] * 1000 / 1e9
+            fig_s_aum = go.Figure()
+            fig_s_aum.add_trace(go.Bar(
+                y=[format_prog_label(p, 36) for p in df_top_aum_serv["programa"]],
+                x=df_top_aum_serv["delta_mm"],
+                orientation='h',
+                marker_color="#10b981",
+                customdata=df_top_aum_serv[["ministerio", "programa", "delta_mm", "pct_change", "vigente_base_mm", "vigente_comp_mm"]].values,
+                hovertemplate="<b>%{customdata[1]}</b><br>Ministerio: %{customdata[0]}<br>Base: <b>$%{customdata[4]:,.1f} MM</b> ➔ Corte: <b>$%{customdata[5]:,.1f} MM</b><br>Aumento: <b>$%{customdata[2]:+,.1f} MM</b> (%{customdata[3]:+.2f}%)<extra></extra>"
+            ))
+            fig_s_aum.update_layout(
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                height=420,
+                autosize=True,
+                margin=dict(l=160, r=25, t=25, b=45),
+                xaxis=dict(title="Monto Aumentado ($ MM)", gridcolor="#f1f5f9"),
+                yaxis=dict(autorange="reversed", gridcolor="#f1f5f9", tickfont=dict(size=10.5))
+            )
+            st.plotly_chart(fig_s_aum, use_container_width=True)
+        else:
+            st.info("No se registraron servicios con aumentos en el tramo evaluado.")
+
+    with tab_serv_all:
+        df_serv_show = df_serv.copy()
+        df_serv_show["vigente_base_mm"] = df_serv_show["vigente_base"] * 1000 / 1e9
+        df_serv_show["vigente_comp_mm"] = df_serv_show["vigente_comp"] * 1000 / 1e9
+        df_serv_show["delta_mm"] = df_serv_show["delta"] * 1000 / 1e9
+        
+        c_sf1, c_sf2, c_sf3 = st.columns([3, 4, 3])
+        with c_sf1:
+            filtro_serv_status = st.radio("Filtro Variación:", ["Todos", "🔻 Solo Recortes", "🔺 Solo Aumentos"], horizontal=True, key="filtro_serv_status")
+        with c_sf2:
+            search_serv = st.text_input("🔍 Buscar Servicio / Programa:", placeholder="Ej: Fonasa, Junaeb, Vialidad...", key="txt_search_serv")
+        with c_sf3:
+            csv_serv = df_serv_show.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("⬇️ Descargar Servicios (CSV)", data=csv_serv, file_name=f"servicios_variaciones_{year}_{base_period}_{comp_period}.csv", mime="text/csv", use_container_width=True)
+            
+        if filtro_serv_status == "🔻 Solo Recortes":
+            df_serv_show = df_serv_show[df_serv_show["delta"] < -1e-4]
+        elif filtro_serv_status == "🔺 Solo Aumentos":
+            df_serv_show = df_serv_show[df_serv_show["delta"] > 1e-4]
+            
+        if search_serv:
+            q_s = search_serv.lower()
+            df_serv_show = df_serv_show[
+                df_serv_show["ministerio"].str.lower().str.contains(q_s) |
+                df_serv_show["programa"].str.lower().str.contains(q_s)
+            ]
+            
+        st.dataframe(
+            df_serv_show[["ministerio", "programa", "status", "vigente_base_mm", "vigente_comp_mm", "delta_mm", "pct_change"]].rename(columns={
+                "ministerio": "Ministerio",
+                "programa": "Servicio / Programa",
+                "status": "Estado",
+                "vigente_base_mm": f"Base {base_period} ($ MM)",
+                "vigente_comp_mm": f"Corte {comp_period} ($ MM)",
+                "delta_mm": "Variación ($ MM)",
+                "pct_change": "% Variación"
+            }).style.format({
+                f"Base {base_period} ($ MM)": "${:,.1f}",
+                f"Corte {comp_period} ($ MM)": "${:,.1f}",
+                "Variación ($ MM)": "${:+,.1f}",
+                "% Variación": "{:+.2f}%"
+            }),
+            use_container_width=True,
+            height=400
+        )
+
+    st.markdown("---")
+
+    # 7. SECCIÓN 4: ¿EN QUÉ SE RECORTÓ Y EN QUÉ SE AUMENTÓ? (SUBTÍTULOS ECONÓMICOS)
+    st.markdown("##### 📑 4. ¿En qué conceptos se recortó y en qué se aumentó? (Subtítulos Económicos)")
+    st.caption("Desglose según la clasificación presupuestaria económica: Gastos en Personal, Bienes de Consumo, Transferencias, Inversión Real y Deuda.")
+
+    c_sub1, c_sub2 = st.columns([6.2, 3.8], gap="medium")
+    with c_sub1:
+        df_subt_plot = df_subt.sort_values(by="delta", ascending=True).copy()
+        df_subt_plot["label"] = df_subt_plot.apply(lambda r: f"Subt. {r['subtitulo_cod']} - {r['subtitulo_nom'][:28]}", axis=1)
+        colors_subt = ["#ef4444" if d < 0 else "#10b981" for d in df_subt_plot["delta"]]
+
+        fig_subt = go.Figure()
+        fig_subt.add_trace(go.Bar(
+            y=df_subt_plot["label"],
+            x=df_subt_plot["delta"] * 1000 / 1e9,
+            orientation='h',
+            marker_color=colors_subt,
+            customdata=df_subt_plot[["vigente_base", "vigente_comp", "pct_change"]].values,
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                f"Presupuesto {base_period}: <b>$%{{customdata[0]:,.0f}} M$</b><br>"
+                f"Presupuesto {comp_period}: <b>$%{{customdata[1]:,.0f}} M$</b><br>"
+                "Variación Neta: <b>$%{x:+,.1f} MM</b> (%{customdata[2]:+.2f}%)<extra></extra>"
+            )
+        ))
+        fig_subt.update_layout(
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            autosize=True,
+            height=max(400, len(df_subt_plot) * 22),
+            margin=dict(l=220, r=25, t=25, b=45),
+            xaxis=dict(title="Variación Neta ($ MM)", gridcolor="#f1f5f9", tickprefix="$ "),
+            yaxis=dict(gridcolor="#f1f5f9", tickfont=dict(size=10.5))
+        )
+        st.plotly_chart(fig_subt, use_container_width=True)
+
+    with c_sub2:
+        st.markdown("###### 🔍 Análisis de Reorientación Fiscal")
+        
+        # Subtítulos clave
+        subt_inversion = df_subt[df_subt["subtitulo_cod"].isin(["29", "31", "33"])]
+        delta_inv = subt_inversion["delta"].sum() * 1000 / 1e9 if not subt_inversion.empty else 0.0
+        
+        subt_personal = df_subt[df_subt["subtitulo_cod"] == "21"]
+        delta_pers = subt_personal["delta"].sum() * 1000 / 1e9 if not subt_personal.empty else 0.0
+        
+        subt_deuda = df_subt[df_subt["subtitulo_cod"] == "34"]
+        delta_deuda = subt_deuda["delta"].sum() * 1000 / 1e9 if not subt_deuda.empty else 0.0
+
+        st.markdown(f"""
+        <div style="background-color: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+            <div style="font-weight: 700; color: #1e293b; font-size: 0.92rem; margin-bottom: 6px;">🏗️ Cuentas de Capital e Inversión (29, 31, 33)</div>
+            <div style="font-size: 0.84rem; color: #475569;">Variación: <b style="color: {'#10b981' if delta_inv >= 0 else '#ef4444'}; font-size: 0.95rem;">${delta_inv:+,.1f} MM</b></div>
+            <div style="font-size: 0.76rem; color: #64748b; margin-top: 3px;">Iniciativas de inversión pública, compras de activos y transferencias de capital.</div>
+        </div>
+
+        <div style="background-color: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+            <div style="font-weight: 700; color: #1e293b; font-size: 0.92rem; margin-bottom: 6px;">👥 Gastos en Personal (Subtítulo 21)</div>
+            <div style="font-size: 0.84rem; color: #475569;">Variación: <b style="color: {'#10b981' if delta_pers >= 0 else '#ef4444'}; font-size: 0.95rem;">${delta_pers:+,.1f} MM</b></div>
+            <div style="font-size: 0.76rem; color: #64748b; margin-top: 3px;">Dotación, remuneraciones, contratas y honorarios del personal público.</div>
+        </div>
+
+        <div style="background-color: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+            <div style="font-weight: 700; color: #1e293b; font-size: 0.92rem; margin-bottom: 6px;">💳 Servicio de la Deuda (Subtítulo 34)</div>
+            <div style="font-size: 0.84rem; color: #475569;">Variación: <b style="color: {'#10b981' if delta_deuda >= 0 else '#ef4444'}; font-size: 0.95rem;">${delta_deuda:+,.1f} MM</b></div>
+            <div style="font-size: 0.76rem; color: #64748b; margin-top: 3px;">Compromisos y amortizaciones de deuda interna y externa.</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # 8. SECCIÓN 5: MATRIZ DETALLADA Y DESCARGA DE DATOS
+    st.markdown("##### 📋 5. Matriz Detallada de Modificaciones Presupuestarias")
+    st.caption("Explora, busca y descarga el registro completo de partidas, programas y cuentas.")
+
+    c_f1, c_f2, c_f3 = st.columns([3, 4, 3])
+    with c_f1:
+        filtro_status = st.radio(
+            "Filtrar por Tipo de Variación:",
+            options=["Todos", "🔻 Solo Recortes", "🔺 Solo Aumentos", "➖ Sin cambio"],
+            horizontal=True,
+            key="filtro_var_status"
+        )
+    with c_f2:
+        search_query = st.text_input("🔍 Buscar por Ministerio o Servicio:", placeholder="Ej: Salud, Vivienda, Corfo...", key="txt_var_search")
+    with c_f3:
+        lista_subts_unicos = ["Todos"] + sorted(df_detail["subtitulo_cod"].dropna().unique().tolist())
+        sel_subt_filter = st.selectbox("Filtrar por Subtítulo:", options=lista_subts_unicos, key="sb_var_subt_filter")
+
+    df_filtered_detail = df_detail.copy()
+    if filtro_status == "🔻 Solo Recortes":
+        df_filtered_detail = df_filtered_detail[df_filtered_detail["delta"] < -1e-4]
+    elif filtro_status == "🔺 Solo Aumentos":
+        df_filtered_detail = df_filtered_detail[df_filtered_detail["delta"] > 1e-4]
+    elif filtro_status == "➖ Sin cambio":
+        df_filtered_detail = df_filtered_detail[abs(df_filtered_detail["delta"]) <= 1e-4]
+
+    if search_query:
+        q_low = search_query.lower()
+        df_filtered_detail = df_filtered_detail[
+            df_filtered_detail["ministerio"].str.lower().str.contains(q_low) |
+            df_filtered_detail["programa"].str.lower().str.contains(q_low) |
+            df_filtered_detail["item_nom"].str.lower().str.contains(q_low)
+        ]
+
+    if sel_subt_filter != "Todos":
+        df_filtered_detail = df_filtered_detail[df_filtered_detail["subtitulo_cod"] == sel_subt_filter]
+
+    st.markdown(f"**Registros encontrados:** `{len(df_filtered_detail):,}`")
+
+    col_btn_d1, col_btn_d2 = st.columns([8, 2])
+    with col_btn_d2:
+        csv_detail = df_filtered_detail.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            "⬇️ Descargar en CSV",
+            data=csv_detail,
+            file_name=f"recortes_y_aumentos_{year}_{base_period}_{comp_period}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+    st.dataframe(
+        df_filtered_detail[[
+            "ministerio", "programa", "subtitulo_cod", "subtitulo_nom", "item_nom", "status", "vigente_base", "vigente_comp", "delta", "pct_change"
+        ]].rename(columns={
+            "ministerio": "Ministerio",
+            "programa": "Servicio / Programa",
+            "subtitulo_cod": "Subt.",
+            "subtitulo_nom": "Nombre Subtítulo",
+            "item_nom": "Concepto / Ítem",
+            "status": "Estado",
+            "vigente_base": f"Base {base_period} ($ M)",
+            "vigente_comp": f"Corte {comp_period} ($ M)",
+            "delta": "Variación ($ M)",
+            "pct_change": "% Variación"
+        }).style.format({
+            f"Base {base_period} ($ M)": "${:,.0f}",
+            f"Corte {comp_period} ($ M)": "${:,.0f}",
+            "Variación ($ M)": "${:+,.0f}",
+            "% Variación": "{:+.2f}%"
+        }),
+        use_container_width=True,
+        height=450
+    )
+
+# ==============================================================================
 # SIDEBAR DE FILTROS DINÁMICOS
 # ==============================================================================
 with st.sidebar:
@@ -2904,7 +3471,12 @@ with st.sidebar:
     # Selector de Modo / Ventana de Análisis
     nav_view_mode = st.radio(
         "🪟 Ventana de Análisis:",
-        options=["🏛️ Detalle por Ministerio", "🏆 Rankings & Tops Nacionales"],
+        options=[
+            "🏛️ Detalle por Ministerio",
+            "🏆 Rankings & Tops Nacionales",
+            "✂️ Seguimiento de Recortes y Aumentos",
+            "🇨🇱 Monitor de Programas Sebastián Piñera"
+        ],
         index=0,
         key="sb_nav_view_mode"
     )
@@ -3042,7 +3614,7 @@ with st.sidebar:
         if not selected_progs:
             selected_progs = all_progs
 
-    else:
+    elif nav_view_mode == "🏆 Rankings & Tops Nacionales":
         # CONTROLES PARA LA VENTANA DE RANKINGS Y TOPS NACIONALES
         nat_view_focus = st.radio(
             "Enfoque Temporal:",
@@ -3199,6 +3771,157 @@ with st.sidebar:
         selected_progs = []
         total_progs_count = 0
 
+    elif nav_view_mode == "✂️ Seguimiento de Recortes y Aumentos":
+        # CONTROLES PARA LA VENTANA DE RECORTES Y AUMENTOS PRESUPUESTARIOS
+        st.markdown("**✂️ Modificaciones Presupuestarias**")
+        st.caption("Seguimiento de recortes y suplementaciones de presupuesto vigente entre dos periodos de corte.")
+
+        # Periodos disponibles
+        order_months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+        loaded_months = db.get_loaded_periods_for_year(selected_year)
+        avail_db_months = [m for m in order_months if m in loaded_months]
+        if not avail_db_months:
+            avail_db_months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio']
+
+        # Accesos Rápidos
+        st.markdown("**⚡ Accesos Rápidos de Comparación:**")
+        c_p1, c_p2 = st.columns(2)
+        with c_p1:
+            if st.button("🏛️ Ley Inicial ➔ Hoy", key="btn_var_pre_ini", use_container_width=True, help="Presupuesto Inicial aprobado por Ley vs Vigente al mes más reciente"):
+                st.session_state["sb_var_base"] = "🏛️ Presupuesto Inicial (Ley)"
+                st.session_state["sb_var_comp"] = avail_db_months[-1]
+                st.rerun()
+            if st.button("🇨🇱 Gestión (Mar ➔ Hoy)", key="btn_var_pre_marzo", use_container_width=True, help="Desde asunción de mando en Marzo hasta la fecha actual"):
+                st.session_state["sb_var_base"] = "Marzo" if "Marzo" in avail_db_months else avail_db_months[0]
+                st.session_state["sb_var_comp"] = avail_db_months[-1]
+                st.rerun()
+            if st.button("🔄 Traspaso (Mar ➔ Abr)", key="btn_var_pre_traspaso", use_container_width=True, help="Traspaso e instalación presidencial: variaciones marzo a abril"):
+                st.session_state["sb_var_base"] = "Marzo" if "Marzo" in avail_db_months else avail_db_months[0]
+                st.session_state["sb_var_comp"] = "Abril" if "Abril" in avail_db_months else avail_db_months[-1]
+                st.rerun()
+        with c_p2:
+            if st.button("✂️ Post-Inst. (Abr ➔ Hoy)", key="btn_var_pre_trans", use_container_width=True, help="Desde Abril hasta el mes más reciente"):
+                st.session_state["sb_var_base"] = "Abril" if "Abril" in avail_db_months else avail_db_months[0]
+                st.session_state["sb_var_comp"] = avail_db_months[-1]
+                st.rerun()
+            if st.button("📅 Año Completo (Ene ➔ Hoy)", key="btn_var_pre_full", use_container_width=True):
+                st.session_state["sb_var_base"] = "Enero" if "Enero" in avail_db_months else avail_db_months[0]
+                st.session_state["sb_var_comp"] = avail_db_months[-1]
+                st.rerun()
+            if st.button("⚡ Último Mes (Intermensual)", key="btn_var_pre_last", use_container_width=True):
+                if len(avail_db_months) >= 2:
+                    st.session_state["sb_var_base"] = avail_db_months[-2]
+                    st.session_state["sb_var_comp"] = avail_db_months[-1]
+                st.rerun()
+
+        base_options = ["🏛️ Presupuesto Inicial (Ley)"] + avail_db_months
+
+        # Defaults de session_state
+        if "sb_var_base" not in st.session_state or st.session_state["sb_var_base"] not in base_options:
+            st.session_state["sb_var_base"] = "Abril" if "Abril" in avail_db_months else avail_db_months[0]
+
+        var_base_period = st.selectbox(
+            "📌 Periodo Base (Desde):",
+            options=base_options,
+            index=base_options.index(st.session_state["sb_var_base"]),
+            key="sb_var_base",
+            help="Punto de partida para contrastar modificaciones presupuestarias."
+        )
+
+        if var_base_period == "🏛️ Presupuesto Inicial (Ley)":
+            valid_comp_options = avail_db_months
+        else:
+            valid_comp_options = [m for m in avail_db_months if avail_db_months.index(m) > avail_db_months.index(var_base_period)]
+            if not valid_comp_options:
+                valid_comp_options = avail_db_months
+
+        if "sb_var_comp" not in st.session_state or st.session_state["sb_var_comp"] not in valid_comp_options:
+            st.session_state["sb_var_comp"] = valid_comp_options[-1]
+
+        var_comp_period = st.selectbox(
+            "🎯 Periodo de Corte (Hasta):",
+            options=valid_comp_options,
+            index=valid_comp_options.index(st.session_state["sb_var_comp"]),
+            key="sb_var_comp",
+            help="Mes final de comparación para evaluar recortes y aumentos acumulados."
+        )
+
+        var_exclude_tesoro = st.checkbox(
+            "🛡️ Excluir Tesoro Público",
+            value=True,
+            key="sb_var_exclude_tesoro",
+            help="Excluye el Tesoro Público para comparar la gestión fiscal directa de los ministerios sectoriales."
+        )
+
+        var_filter_mins = st.multiselect(
+            "Filtrar Ministerios Específicos",
+            options=all_mins,
+            default=[],
+            key="sb_var_filter_mins",
+            placeholder="Todos los ministerios (sin filtro)"
+        )
+
+        # Fallbacks para variables requeridas en contexto global
+        selected_min = all_mins[0] if all_mins else ""
+        selected_period = var_comp_period
+        selected_progs = []
+        total_progs_count = 0
+
+    elif nav_view_mode == "🇨🇱 Monitor de Programas Sebastián Piñera":
+        st.markdown("**🇨🇱 Programas Presidente Piñera**")
+        st.caption("Auditoría técnica y defensa presupuestaria para el Ejercicio Fiscal 2027.")
+
+        # Periodo de corte
+        order_months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+        loaded_p = db.get_loaded_periods_for_year(selected_year)
+        avail_p = [m for m in order_months if m in loaded_p]
+        if not avail_p:
+            avail_p = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio']
+
+        pinera_period = st.selectbox("📅 Mes de Corte Presupuestario:", avail_p, index=len(avail_p)-1, key="sb_pinera_period")
+
+        # Filtro Eje Temático
+        pinera_category = st.selectbox(
+            "📂 Eje Temático / Sector:",
+            options=[
+                "Todos",
+                "Educación y Capital Humano",
+                "Seguridad Social y Empleo",
+                "Salud Pública e Innovación Asistencial",
+                "Infancia y Juventud Vulnerable",
+                "Seguridad Ciudadana y Fronteras",
+                "Desarrollo Social y Adulto Mayor",
+                "Vivienda y Hábitat"
+            ],
+            index=0,
+            key="sb_pinera_category"
+        )
+
+        # Filtro Nivel de Riesgo 2027
+        pinera_risk = st.selectbox(
+            "⚠️ Nivel de Riesgo Fiscal 2027:",
+            options=[
+                "Todos",
+                "Crítico",
+                "Alto",
+                "Moderada a Severa",
+                "Media a Alta",
+                "Media",
+                "Baja a Media"
+            ],
+            index=0,
+            key="sb_pinera_risk"
+        )
+
+        # Buscador por texto
+        pinera_search = st.text_input("🔍 Buscar Programa o Ley:", "", key="sb_pinera_search", placeholder="ej. Bicentenario, PGU, 21.419...")
+
+        # Fallbacks de variables requeridas
+        selected_min = all_mins[0] if all_mins else ""
+        selected_period = pinera_period
+        selected_progs = []
+        total_progs_count = 0
+
     st.markdown("---")
     db_summary = db.get_processed_reports_summary()
     total_informes_db = int(db_summary["total_informes"].sum()) if not db_summary.empty else 0
@@ -3223,6 +3946,26 @@ if nav_view_mode == "🏆 Rankings & Tops Nacionales":
         filter_mins=nat_filter_mins
     )
     st.stop()
+elif nav_view_mode == "✂️ Seguimiento de Recortes y Aumentos":
+    render_budget_variations_view(
+        year=selected_year,
+        base_period=var_base_period,
+        comp_period=var_comp_period,
+        moneda=selected_currency,
+        exclude_tesoro=var_exclude_tesoro,
+        filter_mins=var_filter_mins
+    )
+    st.stop()
+elif nav_view_mode == "🇨🇱 Monitor de Programas Sebastián Piñera":
+    render_pinera_programs_view(
+        year=selected_year,
+        periodo=pinera_period,
+        moneda=selected_currency,
+        selected_category=pinera_category,
+        selected_risk=pinera_risk,
+        search_query=pinera_search
+    )
+    st.stop()
 
 # ENCABEZADO PRINCIPAL DE LA PÁGINA (MINISTERIAL)
 st.markdown(f"""
@@ -3239,16 +3982,17 @@ st.markdown(f"""
         </div>
         <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
             <span class="pill-badge">🏢 {len(selected_progs)} de {total_progs_count} servicios activos</span>
-            <span class="pill-badge" style="background-color: #eff6ff; border-color: #93c5fd; color: #1d4ed8 !important;">🎯 Foco: Subt. 29, 31 y 33</span>
+            <span class="pill-badge" style="background-color: #eff6ff; border-color: #93c5fd; color: #1d4ed8 !important;">🎯 Foco: Subt. 29, 31, 33 y 34</span>
         </div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 # Pestañas principales
-tab_dashboard, tab_inversion, tab_comparativa, tab_rankings, tab_catalogo, tab_database = st.tabs([
+tab_dashboard, tab_inversion, tab_variaciones, tab_comparativa, tab_rankings, tab_catalogo, tab_database = st.tabs([
     "📊 Resumen Ejecutivo",
-    "🏗️ Inversión y Capital (Subt. 29, 31, 33)",
+    "🏗️ Inversión, Capital y Deuda (Subt. 29, 31, 33, 34)",
+    "✂️ Recortes y Aumentos",
     "📈 Comparativa Histórica",
     "🏆 Rankings & Tops Nacionales",
     "🌐 Catálogo & Scraper DIPRES",
@@ -3432,23 +4176,24 @@ with tab_dashboard:
             )
 
 # ==============================================================================
-# TAB 2: FOCO INVERSIÓN Y CAPITAL (SUBTÍTULOS 29, 31, 33)
+# ==============================================================================
+# TAB 2: FOCO INVERSIÓN, CAPITAL Y DEUDA (SUBTÍTULOS 29, 31, 33, 34)
 # ==============================================================================
 with tab_inversion:
-    st.markdown("#### 🏗️ Inversión Pública y Gastos de Capital")
-    st.caption("Análisis estratégico de cuentas de capital: Subtítulo 31 (Iniciativas de Inversión), Subtítulo 29 (Activos No Financieros) y Subtítulo 33 (Transferencias de Capital).")
+    st.markdown("#### 🏗️ Inversión Pública, Gastos de Capital y Deuda")
+    st.caption("Análisis estratégico de cuentas: Subtítulo 31 (Iniciativas de Inversión), Subtítulo 29 (Activos No Financieros), Subtítulo 33 (Transferencias de Capital) y Subtítulo 34 (Servicio de la Deuda).")
     
-    # 4 Tarjetas de Métricas Ejecutivas de Capital
-    m1, m2, m3, m4 = st.columns(4, gap="small")
+    # 5 Tarjetas de Métricas Ejecutivas de Capital y Deuda
+    m1, m2, m3, m4, m5 = st.columns(5, gap="small")
     with m1:
         st.markdown(render_kpi_card_html(
-            title="Total Capital (29+31+33)",
-            value=format_currency(kpis["capital_ejecucion"]),
-            subtitle=f"Vigente: {format_currency(kpis['capital_vigente'])}",
+            title="Total Capital + Deuda (29+31+33+34)",
+            value=format_currency(kpis["capital_deuda_ejecucion"]),
+            subtitle=f"Vigente: {format_currency(kpis['capital_deuda_vigente'])}",
             icon="🏗️",
             theme="blue",
-            progress=kpis['pct_capital'],
-            badge=f"{kpis['pct_capital']}% avance"
+            progress=kpis['pct_capital_deuda'],
+            badge=f"{kpis['pct_capital_deuda']}% avance"
         ), unsafe_allow_html=True)
     with m2:
         st.markdown(render_kpi_card_html(
@@ -3480,23 +4225,35 @@ with tab_inversion:
             progress=kpis['pct_subt33'],
             badge=f"{kpis['pct_subt33']}% avance"
         ), unsafe_allow_html=True)
+    with m5:
+        st.markdown(render_kpi_card_html(
+            title="Subt. 34: Servicio Deuda",
+            value=format_currency(kpis["subt34_ejecucion"]),
+            subtitle=f"Vigente: {format_currency(kpis['subt34_vigente'])}",
+            icon="💳",
+            theme="rose",
+            progress=kpis['pct_subt34'],
+            badge=f"{kpis['pct_subt34']}% avance"
+        ), unsafe_allow_html=True)
 
     st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
     
     # Selector de subtítulo específico para la vista analítica
     filtro_subt_tab = st.radio(
-        "Filtrar desglose por cuenta de capital:",
-        options=["Todos (29, 31, 33)", "Subtítulo 31 - Iniciativas de Inversión", "Subtítulo 29 - Activos No Financieros", "Subtítulo 33 - Transferencias de Capital"],
+        "Filtrar desglose por cuenta:",
+        options=["Todos (29, 31, 33, 34)", "Subtítulo 31 - Iniciativas de Inversión", "Subtítulo 29 - Activos No Financieros", "Subtítulo 33 - Transferencias de Capital", "Subtítulo 34 - Servicio de la Deuda"],
         horizontal=True
     )
     
-    subts_query = ["29", "31", "33"]
+    subts_query = ["29", "31", "33", "34"]
     if "31" in filtro_subt_tab and "Todos" not in filtro_subt_tab:
         subts_query = ["31"]
     elif "29" in filtro_subt_tab and "Todos" not in filtro_subt_tab:
         subts_query = ["29"]
     elif "33" in filtro_subt_tab and "Todos" not in filtro_subt_tab:
         subts_query = ["33"]
+    elif "34" in filtro_subt_tab and "Todos" not in filtro_subt_tab:
+        subts_query = ["34"]
 
     df_inv = db.get_inversiones_summary(
         year=selected_year,
@@ -3514,7 +4271,7 @@ with tab_inversion:
         
         ig1, ig2 = st.columns([5.2, 4.8], gap="medium")
         with ig1:
-            st.markdown("##### 📊 Gasto de Capital por Dirección / Servicio")
+            st.markdown("##### 📊 Gasto de Capital y Deuda por Dirección / Servicio")
             if not df_subts_summary.empty:
                 display_labels = [format_prog_label(p, max_len=24) for p in df_subts_summary["programa"]]
                 full_prog_names = df_subts_summary["programa"].tolist()
@@ -3566,16 +4323,16 @@ with tab_inversion:
             fig_comp = go.Figure()
             fig_comp.add_trace(go.Bar(
                 name="Presupuesto Vigente",
-                y=["Subt. 33 Transf.", "Subt. 29 Activos", "Subt. 31 Inversión"],
-                x=[kpis["subt33_vigente"], kpis["subt29_vigente"], kpis["subt31_vigente"]],
+                y=["Subt. 34 Deuda", "Subt. 33 Transf.", "Subt. 29 Activos", "Subt. 31 Inversión"],
+                x=[kpis["subt34_vigente"], kpis["subt33_vigente"], kpis["subt29_vigente"], kpis["subt31_vigente"]],
                 orientation="h",
                 marker_color="#3b82f6",  # Azul vibrante
                 hovertemplate="<b>%{y}</b><br>Vigente: %{x:$,.0f} M$<extra></extra>"
             ))
             fig_comp.add_trace(go.Bar(
                 name="Ejecución Acumulada",
-                y=["Subt. 33 Transf.", "Subt. 29 Activos", "Subt. 31 Inversión"],
-                x=[kpis["subt33_ejecucion"], kpis["subt29_ejecucion"], kpis["subt31_ejecucion"]],
+                y=["Subt. 34 Deuda", "Subt. 33 Transf.", "Subt. 29 Activos", "Subt. 31 Inversión"],
+                x=[kpis["subt34_ejecucion"], kpis["subt33_ejecucion"], kpis["subt29_ejecucion"], kpis["subt31_ejecucion"]],
                 orientation="h",
                 marker_color="#10b981",  # Verde vibrante
                 hovertemplate="<b>%{y}</b><br>Ejecutado: %{x:$,.0f} M$<extra></extra>"
@@ -3603,7 +4360,7 @@ with tab_inversion:
             )
             st.plotly_chart(fig_comp, use_container_width=True, theme=None, config={"responsive": True, "displayModeBar": True, "autosizable": True})
             
-        st.markdown("##### 📋 Detalle de Cuentas, Proyectos y Estudios de Inversión")
+        st.markdown("##### 📋 Detalle de Cuentas, Proyectos, Transferencias y Deuda")
         st.dataframe(
             df_inv[["subtitulo_cod", "subtitulo_nom", "programa", "nivel", "clasificacion", "vigente", "ejecucion", "saldo", "pct_ejecucion"]].style.format({
                 "vigente": "{:,.0f}",
@@ -3614,6 +4371,73 @@ with tab_inversion:
             use_container_width=True,
             height=400
         )
+
+# ==============================================================================
+# TAB: SEGUIMIENTO DE RECORTES Y AUMENTOS (ENFOQUE MINISTERIAL)
+# ==============================================================================
+with tab_variaciones:
+    st.markdown("#### ✂️ Recortes y Aumentos Presupuestarios en el Ministerio")
+    st.caption(f"Auditoría de variaciones de presupuesto vigente y modificaciones entre periodos para **{selected_min}**.")
+
+    avail_pers_y = db.get_loaded_periods_for_year(selected_year)
+    if not avail_pers_y:
+        avail_pers_y = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio"]
+
+    tab_base_options = ["🏛️ Presupuesto Inicial (Ley)"] + avail_pers_y
+
+    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
+    with col_btn1:
+        if st.button("🏛️ Ley Inicial ➔ Hoy", key="tab_var_btn_ini", use_container_width=True):
+            st.session_state["var_tab_base_p"] = "🏛️ Presupuesto Inicial (Ley)"
+            st.session_state["var_tab_comp_p"] = avail_pers_y[-1]
+            st.rerun()
+    with col_btn2:
+        if st.button("🇨🇱 Gestión (Mar ➔ Hoy)", key="tab_var_btn_marzo", use_container_width=True):
+            st.session_state["var_tab_base_p"] = "Marzo" if "Marzo" in avail_pers_y else avail_pers_y[0]
+            st.session_state["var_tab_comp_p"] = avail_pers_y[-1]
+            st.rerun()
+    with col_btn3:
+        if st.button("🔄 Traspaso (Mar ➔ Abr)", key="tab_var_btn_m_a", use_container_width=True):
+            st.session_state["var_tab_base_p"] = "Marzo" if "Marzo" in avail_pers_y else avail_pers_y[0]
+            st.session_state["var_tab_comp_p"] = "Abril" if "Abril" in avail_pers_y else avail_pers_y[-1]
+            st.rerun()
+    with col_btn4:
+        if st.button("✂️ Post-Inst. (Abr ➔ Hoy)", key="tab_var_btn_abr", use_container_width=True):
+            st.session_state["var_tab_base_p"] = "Abril" if "Abril" in avail_pers_y else avail_pers_y[0]
+            st.session_state["var_tab_comp_p"] = avail_pers_y[-1]
+            st.rerun()
+
+    if "var_tab_base_p" not in st.session_state or st.session_state["var_tab_base_p"] not in tab_base_options:
+        st.session_state["var_tab_base_p"] = "Abril" if "Abril" in avail_pers_y else avail_pers_y[0]
+
+    col_per_a, col_per_b, col_btn_sync = st.columns([2.5, 2.5, 2])
+    with col_per_a:
+        tab_base_p = st.selectbox("Periodo Base (Inicio / Asunción)", tab_base_options, index=tab_base_options.index(st.session_state["var_tab_base_p"]), key="var_tab_base_p")
+
+    if tab_base_p == "🏛️ Presupuesto Inicial (Ley)":
+        comp_opts = avail_pers_y
+    else:
+        comp_opts = [m for m in avail_pers_y if avail_pers_y.index(m) > avail_pers_y.index(tab_base_p)]
+        if not comp_opts:
+            comp_opts = avail_pers_y
+
+    if "var_tab_comp_p" not in st.session_state or st.session_state["var_tab_comp_p"] not in comp_opts:
+        st.session_state["var_tab_comp_p"] = comp_opts[-1]
+
+    with col_per_b:
+        tab_comp_p = st.selectbox("Periodo de Corte (A la fecha)", comp_opts, index=comp_opts.index(st.session_state["var_tab_comp_p"]), key="var_tab_comp_p")
+    with col_btn_sync:
+        scope_min_all = st.checkbox("Incluir todos los ministerios", value=False, key="var_tab_all_mins", help="Desmarcado: analiza únicamente este ministerio. Marcado: analiza todo el Estado.")
+
+    min_filter_arg = None if scope_min_all else [selected_min]
+    render_budget_variations_view(
+        year=selected_year,
+        base_period=tab_base_p,
+        comp_period=tab_comp_p,
+        moneda=selected_currency,
+        exclude_tesoro=(selected_min != "Tesoro Público"),
+        filter_mins=min_filter_arg
+    )
 
 # ==============================================================================
 # TAB 3: COMPARATIVA HISTÓRICA & MULTIANUAL
