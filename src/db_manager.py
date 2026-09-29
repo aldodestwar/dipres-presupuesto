@@ -822,11 +822,15 @@ class DatabaseManager:
             year,
             subtitulo_cod,
             subtitulo_nom,
+            SUM(presupuesto_inicial) as inicial,
             SUM(presupuesto_vigente) as vigente,
             SUM(ejecucion_acumulada) as ejecucion,
             CASE WHEN SUM(presupuesto_vigente) > 0 
                  THEN ROUND(SUM(ejecucion_acumulada) * 100.0 / SUM(presupuesto_vigente), 2)
-                 ELSE 0.0 END as pct_ejecucion
+                 ELSE 0.0 END as pct_ejecucion,
+            CASE WHEN SUM(presupuesto_inicial) > 0 
+                 THEN ROUND(SUM(ejecucion_acumulada) * 100.0 / SUM(presupuesto_inicial), 2)
+                 ELSE 0.0 END as pct_ejecucion_inicial
         FROM ejecucion_consolidada
         {where_base} {"AND" if where_base else "WHERE"} subtitulo_cod IN ('29', '31', '33') AND nivel = 'SUBTITULO'
         GROUP BY year, subtitulo_cod, subtitulo_nom

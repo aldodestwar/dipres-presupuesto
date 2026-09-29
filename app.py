@@ -4446,8 +4446,8 @@ with tab_comparativa:
     st.markdown("#### 📈 Comparativa Histórica & Tendencia Multianual")
     st.caption(f"Contrasta la evolución presupuestaria, el ritmo de ejecución y los proyectos de inversión para **{selected_min}** a través de una serie de años seleccionable.")
 
-    # 1. Selectores de Años y Periodo de Corte Homogéneo
-    col_sel_yr, col_sel_per = st.columns([3, 2])
+    # 1. Selectores de Años, Periodo de Corte Homogéneo, Barras Presupuestarias y Base % Avance
+    col_sel_yr, col_sel_per, col_sel_base, col_sel_pct = st.columns([2.2, 1.4, 1.7, 1.7], gap="small")
     
     # Obtener años disponibles en BD para este ministerio
     db_min_years = db.get_available_years_for_ministry(selected_min)
@@ -4492,11 +4492,40 @@ with tab_comparativa:
     with col_sel_per:
         st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
         sel_comp_period = st.selectbox(
-            "Periodo de corte homogéneo:",
+            "Periodo de corte:",
             options=avail_comp_periods,
             index=avail_comp_periods.index(default_comp_per) if default_comp_per in avail_comp_periods else 0,
             key="sb_comp_period",
             help="Para comparar cifras equitativas entre años, se analiza el mismo periodo de corte calendario."
+        )
+
+    with col_sel_base:
+        st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
+        sel_comp_mode = st.selectbox(
+            "Barras Presupuesto:",
+            options=[
+                "Presupuesto Vigente",
+                "Presupuesto Inicial (Ley)",
+                "Inicial + Vigente + Ejecución (3 Barras)"
+            ],
+            index=0,
+            key="sb_comp_mode",
+            help="Define qué barras contrastar contra la Ejecución Acumulada: sólo Vigente, sólo Inicial o Inicial + Vigente juntas."
+        )
+
+    with col_sel_pct:
+        st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
+        default_pct_idx = 1 if "Inicial (Ley)" in sel_comp_mode else 0
+        sel_pct_base = st.selectbox(
+            "Base % de Avance:",
+            options=[
+                "% Avance sobre Vigente",
+                "% Avance sobre Inicial (Ley)",
+                "Ambos % (s/Vigente y s/Inicial)"
+            ],
+            index=default_pct_idx,
+            key="sb_pct_base",
+            help="Define la base de cálculo para la línea de porcentaje de avance en el eje secundario: sobre Presupuesto Vigente, Inicial o mostrar ambas líneas simultáneas."
         )
 
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
@@ -4520,23 +4549,37 @@ with tab_comparativa:
         st.warning(f"⚠️ No se registraron datos consolidados para los años {sel_years} en el periodo **{sel_comp_period}**.")
         st.info("💡 Puedes sincronizar o verificar los informes descargados en la pestaña **'Catálogo & Scraper DIPRES'**.")
     else:
-        # Calcular métricas ejecutivas de alto nivel
+        # Calcular porcentajes de avance global
+        df_multi["pct_vigente"] = df_multi.apply(
+            lambda r: round((r["ejecucion"] * 100.0 / r["vigente"]), 1) if r["vigente"] > 0 else 0.0, axis=1
+        )
+        df_multi["pct_inicial"] = df_multi.apply(
+            lambda r: round((r["ejecucion"] * 100.0 / r["inicial"]), 1) if r["inicial"] > 0 else 0.0, axis=1
+        )
+
+        is_pct_ini = "Inicial" in sel_pct_base and "Ambos" not in sel_pct_base
+        primary_pct_col = "pct_inicial" if is_pct_ini else "pct_vigente"
+        primary_pct_label = "% Avance s/Inicial" if is_pct_ini else "% Avance s/Vigente"
+
+        # Métricas ejecutivas
         latest_row = df_multi.iloc[-1]
         earliest_row = df_multi.iloc[0]
-        
-        # Variación punta a punta de presupuesto vigente
+
+        # Variaciones punta a punta
         pct_growth_vig = 0.0
         if earliest_row["vigente"] > 0:
             pct_growth_vig = round(((latest_row["vigente"] - earliest_row["vigente"]) / earliest_row["vigente"]) * 100, 1)
         sign_vig = "+" if pct_growth_vig >= 0 else ""
-        
-        # Promedio histórico de % de avance en este periodo
-        avg_pct_exec = round(df_multi["pct_ejecucion"].mean(), 1)
-        
-        # Total acumulado ejecutado a través de los años analizados
+
+        pct_growth_ini = 0.0
+        if earliest_row["inicial"] > 0:
+            pct_growth_ini = round(((latest_row["inicial"] - earliest_row["inicial"]) / earliest_row["inicial"]) * 100, 1)
+        sign_ini = "+" if pct_growth_ini >= 0 else ""
+
+        # Promedio histórico según base seleccionada
+        avg_pct_exec = round(df_multi[primary_pct_col].mean(), 1)
         total_ejec_sum = df_multi["ejecucion"].sum()
-        
-        # Inversión Subt. 31 del último año analizado y variación
+
         subt31_latest = latest_row["subt31_ejecucion"]
         subt31_earliest = earliest_row["subt31_ejecucion"]
         pct_growth_inv = 0.0
@@ -4547,14 +4590,36 @@ with tab_comparativa:
         # 4 Tarjetas de KPIs Ejecutivos Multianuales
         kc1, kc2, kc3, kc4 = st.columns(4, gap="small")
         with kc1:
-            st.markdown(render_kpi_card_html(
-                title=f"Vigente {int(latest_row['year'])}",
-                value=format_currency(latest_row["vigente"]),
-                subtitle=f"{sign_vig}{pct_growth_vig}% vs {int(earliest_row['year'])}",
-                icon="🏛️",
-                theme="blue",
-                badge=f"{len(df_multi)} Años Base"
-            ), unsafe_allow_html=True)
+            if "Inicial (Ley)" in sel_comp_mode:
+                st.markdown(render_kpi_card_html(
+                    title=f"Inicial {int(latest_row['year'])}",
+                    value=format_currency(latest_row["inicial"]),
+                    subtitle=f"{sign_ini}{pct_growth_ini}% vs {int(earliest_row['year'])}",
+                    icon="🏛️",
+                    theme="blue",
+                    badge=f"{len(df_multi)} Años Base"
+                ), unsafe_allow_html=True)
+            elif "3 Barras" in sel_comp_mode:
+                var_vig_ini = latest_row["vigente"] - latest_row["inicial"]
+                pct_v_i = round((var_vig_ini / latest_row["inicial"]) * 100, 1) if latest_row["inicial"] > 0 else 0.0
+                sign_vi = "+" if pct_v_i >= 0 else ""
+                st.markdown(render_kpi_card_html(
+                    title=f"Vigente {int(latest_row['year'])}",
+                    value=format_currency(latest_row["vigente"]),
+                    subtitle=f"Inicial: {format_currency(latest_row['inicial'])} ({sign_vi}{pct_v_i}%)",
+                    icon="🏛️",
+                    theme="blue",
+                    badge="Inicial + Vigente"
+                ), unsafe_allow_html=True)
+            else:
+                st.markdown(render_kpi_card_html(
+                    title=f"Vigente {int(latest_row['year'])}",
+                    value=format_currency(latest_row["vigente"]),
+                    subtitle=f"{sign_vig}{pct_growth_vig}% vs {int(earliest_row['year'])}",
+                    icon="🏛️",
+                    theme="blue",
+                    badge=f"{len(df_multi)} Años Base"
+                ), unsafe_allow_html=True)
         with kc2:
             st.markdown(render_kpi_card_html(
                 title=f"Ejecución {int(latest_row['year'])}",
@@ -4562,17 +4627,17 @@ with tab_comparativa:
                 subtitle=f"Total serie: {format_currency(total_ejec_sum)}",
                 icon="⚡",
                 theme="green",
-                badge=f"{latest_row['pct_ejecucion']}% avance"
+                badge=f"{latest_row[primary_pct_col]}% devengado"
             ), unsafe_allow_html=True)
         with kc3:
             st.markdown(render_kpi_card_html(
-                title="Tasa Promedio Avance",
+                title=f"Media Avance ({'Inicial' if is_pct_ini else 'Vigente'})",
                 value=f"{avg_pct_exec}%",
                 subtitle=f"Promedio corte al {sel_comp_period}",
                 icon="🎯",
                 theme="indigo",
                 progress=avg_pct_exec,
-                badge="Media Histórica"
+                badge=f"Media s/{'Inicial' if is_pct_ini else 'Vigente'}"
             ), unsafe_allow_html=True)
         with kc4:
             st.markdown(render_kpi_card_html(
@@ -4588,40 +4653,117 @@ with tab_comparativa:
         st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
 
         # 3. Gráficos Comparativos Multianuales
+        # Sombra de borde blanco para asegurar legibilidad total de números sobre cualquier barra
+        white_halo = "-1.5px -1.5px 0 #ffffff, 1.5px -1.5px 0 #ffffff, -1.5px 1.5px 0 #ffffff, 1.5px 1.5px 0 #ffffff, -1px 0 0 #ffffff, 1px 0 0 #ffffff, 0 -1px 0 #ffffff, 0 1px 0 #ffffff, 0 0 6px #ffffff, 0 0 3px #ffffff"
+
         cg1, cg2 = st.columns([5.2, 4.8], gap="medium")
         with cg1:
-            st.markdown("##### 📊 Presupuesto Vigente vs Ejecución Acumulada por Año")
+            if "3 Barras" in sel_comp_mode:
+                st.markdown("##### 📊 Presupuesto Inicial, Vigente y Ejecución por Año")
+            elif "Inicial" in sel_comp_mode:
+                st.markdown("##### 📊 Presupuesto Inicial (Ley) vs Ejecución Acumulada por Año")
+            else:
+                st.markdown("##### 📊 Presupuesto Vigente vs Ejecución Acumulada por Año")
+
             fig_hist = go.Figure()
-            # Barra Vigente (Azul)
-            fig_hist.add_trace(go.Bar(
-                name="Presupuesto Vigente",
-                x=[str(int(y)) for y in df_multi["year"]],
-                y=df_multi["vigente"],
-                marker_color="#2563eb",
-                hovertemplate="<b>Año %{x}</b><br>Vigente: %{y:$,.0f} M$<extra></extra>"
-            ))
-            # Barra Ejecución (Verde)
+            # Si incluye Inicial
+            if "Inicial" in sel_comp_mode:
+                fig_hist.add_trace(go.Bar(
+                    name="Presupuesto Inicial (Ley)",
+                    x=[str(int(y)) for y in df_multi["year"]],
+                    y=df_multi["inicial"],
+                    marker=dict(
+                        color="#60a5fa" if "3 Barras" in sel_comp_mode else "#2563eb",
+                        line=dict(color="#ffffff", width=1.2)
+                    ),
+                    hovertemplate="<b>Año %{x}</b><br>Presupuesto Inicial: %{y:$,.0f} M$<extra></extra>"
+                ))
+            # Si incluye Vigente
+            if "Vigente" in sel_comp_mode:
+                fig_hist.add_trace(go.Bar(
+                    name="Presupuesto Vigente",
+                    x=[str(int(y)) for y in df_multi["year"]],
+                    y=df_multi["vigente"],
+                    marker=dict(
+                        color="#1d4ed8" if "3 Barras" in sel_comp_mode else "#2563eb",
+                        line=dict(color="#ffffff", width=1.2)
+                    ),
+                    hovertemplate="<b>Año %{x}</b><br>Presupuesto Vigente: %{y:$,.0f} M$<extra></extra>"
+                ))
+            # Barra Ejecución (Verde Esmeralda)
             fig_hist.add_trace(go.Bar(
                 name="Ejecución Acumulada",
                 x=[str(int(y)) for y in df_multi["year"]],
                 y=df_multi["ejecucion"],
-                marker_color="#10b981",
-                hovertemplate="<b>Año %{x}</b><br>Ejecución: %{y:$,.0f} M$<extra></extra>"
+                marker=dict(
+                    color="#10b981",
+                    line=dict(color="#ffffff", width=1.2)
+                ),
+                hovertemplate="<b>Año %{x}</b><br>Ejecución Acumulada: %{y:$,.0f} M$<extra></extra>"
             ))
-            # Línea de % de Avance en eje Y secundario
-            fig_hist.add_trace(go.Scatter(
-                name="% Avance Presupuestario",
-                x=[str(int(y)) for y in df_multi["year"]],
-                y=df_multi["pct_ejecucion"],
-                yaxis="y2",
-                mode="lines+markers+text",
-                text=[f"{p}%" for p in df_multi["pct_ejecucion"]],
-                textposition="top center",
-                textfont=dict(color="#b45309", size=11, family="sans-serif"),
-                line=dict(color="#f59e0b", width=3),
-                marker=dict(size=8, color="#d97706"),
-                hovertemplate="<b>Año %{x}</b><br>% Avance: %{y:.1f}%<extra></extra>"
-            ))
+
+            show_pct_vig = "Vigente" in sel_pct_base or "Ambos" in sel_pct_base
+            show_pct_ini = "Inicial" in sel_pct_base or "Ambos" in sel_pct_base
+            max_pct_hist = 50.0
+
+            if show_pct_vig:
+                # Casing blanco exterior para la línea
+                fig_hist.add_trace(go.Scatter(
+                    name="% Avance s/Vigente",
+                    x=[str(int(y)) for y in df_multi["year"]],
+                    y=df_multi["pct_vigente"],
+                    yaxis="y2",
+                    mode="lines",
+                    line=dict(color="#ffffff", width=6.0, dash="solid"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    legendgroup="pct_vig"
+                ))
+                fig_hist.add_trace(go.Scatter(
+                    name="% Avance s/Vigente",
+                    x=[str(int(y)) for y in df_multi["year"]],
+                    y=df_multi["pct_vigente"],
+                    yaxis="y2",
+                    mode="lines+markers+text",
+                    text=[f"<b>{p}%</b>" for p in df_multi["pct_vigente"]],
+                    textposition="top center",
+                    textfont=dict(color="#d97706", size=10 if "Ambos" in sel_pct_base else 11, family="sans-serif", weight="bold", shadow=white_halo),
+                    line=dict(color="#f59e0b", width=2.5, dash="solid"),
+                    marker=dict(size=8, color="#d97706", line=dict(color="#ffffff", width=2)),
+                    legendgroup="pct_vig",
+                    hovertemplate="<b>Año %{x}</b><br>% Avance s/Vigente: %{y:.1f}%<extra></extra>"
+                ))
+                max_pct_hist = max(max_pct_hist, df_multi["pct_vigente"].max())
+
+            if show_pct_ini:
+                # Casing blanco exterior para la línea
+                fig_hist.add_trace(go.Scatter(
+                    name="% Avance s/Inicial",
+                    x=[str(int(y)) for y in df_multi["year"]],
+                    y=df_multi["pct_inicial"],
+                    yaxis="y2",
+                    mode="lines",
+                    line=dict(color="#ffffff", width=6.0, dash="solid"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    legendgroup="pct_ini"
+                ))
+                fig_hist.add_trace(go.Scatter(
+                    name="% Avance s/Inicial",
+                    x=[str(int(y)) for y in df_multi["year"]],
+                    y=df_multi["pct_inicial"],
+                    yaxis="y2",
+                    mode="lines+markers+text",
+                    text=[f"<b>{p}%</b>" for p in df_multi["pct_inicial"]],
+                    textposition="bottom center" if show_pct_vig else "top center",
+                    textfont=dict(color="#0284c7", size=10 if "Ambos" in sel_pct_base else 11, family="sans-serif", weight="bold", shadow=white_halo),
+                    line=dict(color="#0284c7", width=2.5, dash="dash" if show_pct_vig else "solid"),
+                    marker=dict(size=8, color="#0284c7", line=dict(color="#ffffff", width=2)),
+                    legendgroup="pct_ini",
+                    hovertemplate="<b>Año %{x}</b><br>% Avance s/Inicial: %{y:.1f}%<extra></extra>"
+                ))
+                max_pct_hist = max(max_pct_hist, df_multi["pct_inicial"].max())
+
             fig_hist.update_layout(
                 paper_bgcolor="#ffffff",
                 plot_bgcolor="#ffffff",
@@ -4632,7 +4774,7 @@ with tab_comparativa:
                 hoverdistance=60,
                 font=dict(color="#1e293b", family="sans-serif"),
                 margin=dict(l=55, r=50, t=35, b=45, autoexpand=True),
-                legend=dict(orientation="h", y=1.15, font=dict(color="#1e293b", size=11)),
+                legend=dict(orientation="h", y=1.20, font=dict(color="#1e293b", size=10)),
                 hoverlabel=dict(bgcolor="#ffffff", font_color="#0f172a", bordercolor="#cbd5e1"),
                 xaxis=dict(type="category", automargin=True, tickfont=dict(color="#334155", size=11), gridcolor="#f1f5f9", linecolor="#cbd5e1"),
                 yaxis=dict(automargin=True, tickfont=dict(color="#475569", size=10), gridcolor="#f1f5f9", linecolor="#cbd5e1", tickprefix="$ "),
@@ -4641,9 +4783,9 @@ with tab_comparativa:
                     overlaying="y",
                     side="right",
                     automargin=True,
-                    range=[0, max(df_multi["pct_ejecucion"].max() * 1.35, 60)],
+                    range=[0, max(max_pct_hist * 1.35, 60)],
                     showgrid=False,
-                    tickfont=dict(color="#b45309", size=10),
+                    tickfont=dict(color="#475569", size=10),
                     ticksuffix="%"
                 )
             )
@@ -4659,23 +4801,159 @@ with tab_comparativa:
                 moneda=selected_currency
             )
             if not df_subts_hist.empty:
-                subt_colors = {"31": "#2563eb", "29": "#8b5cf6", "33": "#f59e0b"}
+                # Agrupar suma total de gastos de capital (Subt. 29 + 31 + 33) por año
+                df_tot_cap = df_subts_hist.groupby("year").agg({
+                    "ejecucion": "sum",
+                    "vigente": "sum",
+                    "inicial": "sum"
+                }).reset_index().sort_values("year")
+
+                df_tot_cap["pct_vigente"] = df_tot_cap.apply(
+                    lambda r: round((r["ejecucion"] * 100.0 / r["vigente"]), 1) if r["vigente"] > 0 else 0.0, axis=1
+                )
+                df_tot_cap["pct_inicial"] = df_tot_cap.apply(
+                    lambda r: round((r["ejecucion"] * 100.0 / r["inicial"]), 1) if r["inicial"] > 0 else 0.0, axis=1
+                )
+
+                subt_colors = {"31": "#2563eb", "29": "#0d9488", "33": "#f59e0b"}
                 subt_labels = {
                     "31": "Subt. 31 Inversión",
                     "29": "Subt. 29 Activos No Fin.",
                     "33": "Subt. 33 Transf. Capital"
                 }
+                tot_cap_map = dict(zip(df_tot_cap["year"], df_tot_cap["ejecucion"]))
                 fig_cap = go.Figure()
+                
+                # 1. Barras apiladas de ejecución por cada subtítulo (con total acumulado en hover y bordes blancos)
                 for scode in ["31", "29", "33"]:
                     sub_df = df_subts_hist[df_subts_hist["subtitulo_cod"] == scode]
                     if not sub_df.empty:
+                        total_vals = [tot_cap_map.get(y, 0.0) for y in sub_df["year"]]
                         fig_cap.add_trace(go.Bar(
                             name=subt_labels.get(scode, f"Subt. {scode}"),
                             x=[str(int(y)) for y in sub_df["year"]],
                             y=sub_df["ejecucion"],
-                            marker_color=subt_colors.get(scode, "#64748b"),
-                            hovertemplate="<b>Año %{x} - " + subt_labels.get(scode, f"Subt. {scode}") + "</b><br>Ejecución: %{y:$,.0f} M$<extra></extra>"
+                            customdata=total_vals,
+                            marker=dict(
+                                color=subt_colors.get(scode, "#64748b"),
+                                line=dict(color="#ffffff", width=1.2)
+                            ),
+                            hovertemplate=(
+                                "<b>Año %{x} - " + subt_labels.get(scode, f"Subt. {scode}") + "</b><br>"
+                                "Ejecución Subtítulo: %{y:$,.0f} M$<br>"
+                                "💼 <b>Total Ejecutado Capital (29+31+33): %{customdata:$,.0f} M$</b><extra></extra>"
+                            )
                         ))
+
+                # 2. Presupuestos de Capital (Vigente e Inicial) - Desactivados por defecto (visible='legendonly')
+                # Casing blanco Vigente
+                fig_cap.add_trace(go.Scatter(
+                    name="Presupuesto Vigente (29+31+33)",
+                    x=[str(int(y)) for y in df_tot_cap["year"]],
+                    y=df_tot_cap["vigente"],
+                    mode="lines",
+                    line=dict(color="#ffffff", width=6.0, dash="solid"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    visible="legendonly",
+                    legendgroup="pres_vig_cap"
+                ))
+                fig_cap.add_trace(go.Scatter(
+                    name="Presupuesto Vigente (29+31+33)",
+                    x=[str(int(y)) for y in df_tot_cap["year"]],
+                    y=df_tot_cap["vigente"],
+                    mode="lines+markers",
+                    line=dict(color="#1d4ed8", width=2.5, dash="solid"),
+                    marker=dict(size=7, color="#1d4ed8", line=dict(color="#ffffff", width=2)),
+                    visible="legendonly",
+                    legendgroup="pres_vig_cap",
+                    hovertemplate="<b>Año %{x} - Presupuesto Vigente Capital (29+31+33)</b><br>Monto Vigente: %{y:$,.0f} M$<extra></extra>"
+                ))
+
+                # Casing blanco Inicial
+                fig_cap.add_trace(go.Scatter(
+                    name="Presupuesto Inicial (29+31+33)",
+                    x=[str(int(y)) for y in df_tot_cap["year"]],
+                    y=df_tot_cap["inicial"],
+                    mode="lines",
+                    line=dict(color="#ffffff", width=6.0, dash="solid"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    visible="legendonly",
+                    legendgroup="pres_ini_cap"
+                ))
+                fig_cap.add_trace(go.Scatter(
+                    name="Presupuesto Inicial (29+31+33)",
+                    x=[str(int(y)) for y in df_tot_cap["year"]],
+                    y=df_tot_cap["inicial"],
+                    mode="lines+markers",
+                    line=dict(color="#0284c7", width=2.5, dash="dash"),
+                    marker=dict(size=7, color="#0284c7", line=dict(color="#ffffff", width=2)),
+                    visible="legendonly",
+                    legendgroup="pres_ini_cap",
+                    hovertemplate="<b>Año %{x} - Presupuesto Inicial Capital (Ley)</b><br>Monto Inicial: %{y:$,.0f} M$<extra></extra>"
+                ))
+
+                # 3. Líneas de % de Avance de Gastos de Capital en eje secundario Y2
+                max_pct_cap = 50.0
+                if show_pct_vig:
+                    # Casing blanco exterior
+                    fig_cap.add_trace(go.Scatter(
+                        name="% Avance Capital s/Vigente",
+                        x=[str(int(y)) for y in df_tot_cap["year"]],
+                        y=df_tot_cap["pct_vigente"],
+                        yaxis="y2",
+                        mode="lines",
+                        line=dict(color="#ffffff", width=6.0, dash="solid"),
+                        showlegend=False,
+                        hoverinfo="skip",
+                        legendgroup="cap_pct_vig"
+                    ))
+                    fig_cap.add_trace(go.Scatter(
+                        name="% Avance Capital s/Vigente",
+                        x=[str(int(y)) for y in df_tot_cap["year"]],
+                        y=df_tot_cap["pct_vigente"],
+                        yaxis="y2",
+                        mode="lines+markers+text",
+                        text=[f"<b>{p}%</b>" for p in df_tot_cap["pct_vigente"]],
+                        textposition="top center",
+                        textfont=dict(color="#e11d48", size=10 if "Ambos" in sel_pct_base else 11, family="sans-serif", weight="bold", shadow=white_halo),
+                        line=dict(color="#e11d48", width=2.5, dash="dot"),
+                        marker=dict(size=8, color="#e11d48", line=dict(color="#ffffff", width=2)),
+                        legendgroup="cap_pct_vig",
+                        hovertemplate="<b>Año %{x}</b><br>% Avance Capital s/Vigente: %{y:.1f}%<extra></extra>"
+                    ))
+                    max_pct_cap = max(max_pct_cap, df_tot_cap["pct_vigente"].max())
+
+                if show_pct_ini:
+                    # Casing blanco exterior
+                    fig_cap.add_trace(go.Scatter(
+                        name="% Avance Capital s/Inicial",
+                        x=[str(int(y)) for y in df_tot_cap["year"]],
+                        y=df_tot_cap["pct_inicial"],
+                        yaxis="y2",
+                        mode="lines",
+                        line=dict(color="#ffffff", width=6.0, dash="solid"),
+                        showlegend=False,
+                        hoverinfo="skip",
+                        legendgroup="cap_pct_ini"
+                    ))
+                    fig_cap.add_trace(go.Scatter(
+                        name="% Avance Capital s/Inicial",
+                        x=[str(int(y)) for y in df_tot_cap["year"]],
+                        y=df_tot_cap["pct_inicial"],
+                        yaxis="y2",
+                        mode="lines+markers+text",
+                        text=[f"<b>{p}%</b>" for p in df_tot_cap["pct_inicial"]],
+                        textposition="bottom center" if show_pct_vig else "top center",
+                        textfont=dict(color="#0284c7", size=10 if "Ambos" in sel_pct_base else 11, family="sans-serif", weight="bold", shadow=white_halo),
+                        line=dict(color="#0284c7", width=2.5, dash="dashdot" if show_pct_vig else "dot"),
+                        marker=dict(size=8, color="#0284c7", line=dict(color="#ffffff", width=2)),
+                        legendgroup="cap_pct_ini",
+                        hovertemplate="<b>Año %{x}</b><br>% Avance Capital s/Inicial: %{y:.1f}%<extra></extra>"
+                    ))
+                    max_pct_cap = max(max_pct_cap, df_tot_cap["pct_inicial"].max())
+
                 fig_cap.update_layout(
                     paper_bgcolor="#ffffff",
                     plot_bgcolor="#ffffff",
@@ -4685,11 +4963,21 @@ with tab_comparativa:
                     hovermode="x",
                     hoverdistance=60,
                     font=dict(color="#1e293b", family="sans-serif"),
-                    margin=dict(l=55, r=25, t=35, b=45, autoexpand=True),
-                    legend=dict(orientation="h", y=1.15, font=dict(color="#1e293b", size=10)),
+                    margin=dict(l=55, r=50, t=35, b=45, autoexpand=True),
+                    legend=dict(orientation="h", y=1.20, font=dict(color="#1e293b", size=10)),
                     hoverlabel=dict(bgcolor="#ffffff", font_color="#0f172a", bordercolor="#cbd5e1"),
                     xaxis=dict(type="category", automargin=True, tickfont=dict(color="#334155", size=11), gridcolor="#f1f5f9", linecolor="#cbd5e1"),
-                    yaxis=dict(automargin=True, tickfont=dict(color="#475569", size=10), gridcolor="#f1f5f9", linecolor="#cbd5e1", tickprefix="$ ")
+                    yaxis=dict(automargin=True, tickfont=dict(color="#475569", size=10), gridcolor="#f1f5f9", linecolor="#cbd5e1", tickprefix="$ "),
+                    yaxis2=dict(
+                        title="",
+                        overlaying="y",
+                        side="right",
+                        automargin=True,
+                        range=[0, max(max_pct_cap * 1.35, 60)],
+                        showgrid=False,
+                        tickfont=dict(color="#475569", size=10),
+                        ticksuffix="%"
+                    )
                 )
                 st.plotly_chart(fig_cap, use_container_width=True, theme=None, config={"responsive": True, "displayModeBar": True, "autosizable": True})
             else:
